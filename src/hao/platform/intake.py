@@ -1,6 +1,6 @@
 """Intake pipeline: redact → classify → decide autonomy → record + audit → tell the humans (work note).
 
-Phase 3 decides the autonomy level but still takes **no action** on the ticket; agent lanes arrive in Phase 4.
+The lane for the chosen level (hao.agents.lanes) then routes, drafts, waits for approval, or acts.
 """
 
 from __future__ import annotations
@@ -10,12 +10,20 @@ from collections import Counter
 from sqlalchemy.orm import Session, sessionmaker
 
 from hao.adapters.base import TicketingAdapter, TicketingError
+from hao.agents.lanes import LaneDeps, run_lane
 from hao.audit import log as audit
 from hao.db.models import HaoDecision, HaoIntakeResult, HaoProcessedEvent
 from hao.intake.classifiers import Classifier
 from hao.intake.redaction import Redactor
 from hao.policy.engine import Decision, DecisionInput, decide
 from hao.policy.schema import Policy
+
+LANE_HINT = {
+    "A0": "Human only: no AI action will be taken.",
+    "A1": "AI will route the ticket and post a handoff packet; a human leads.",
+    "A2": "AI will draft actions and a reply for human approval.",
+    "A3": "AI will act within its playbook; a sample is QA-reviewed.",
+}
 
 
 def work_note(result: HaoIntakeResult, decision: Decision) -> str:
@@ -25,7 +33,7 @@ def work_note(result: HaoIntakeResult, decision: Decision) -> str:
         f"Autonomy: {decision.explain()}\n"
         f"Accountable owner: {decision.owner_name} · suggested group: {decision.assignment_group} · "
         f"policy {decision.policy_label} ({decision.policy_version})\n"
-        "No action taken yet: agent lanes arrive in Phase 4."
+        + LANE_HINT[decision.level.value]
     )
 
 
@@ -51,6 +59,7 @@ def process_created(
     redactor: Redactor,
     policy: Policy,
     actor: str = "ai:hao-intake",
+    lane_deps: LaneDeps | None = None,
 ) -> HaoIntakeResult | None:
     sys_id = incident["sys_id"]
     with session_factory() as session:
@@ -81,7 +90,8 @@ def process_created(
         work_note_status="pending",
         work_note_error="",
     )
-    d = decide(policy, decision_input(incident, result))
+    x = decision_input(incident, result)
+    d = decide(policy, x)
 
     with session_factory() as session:
         session.add(result)
@@ -121,9 +131,14 @@ def process_created(
         action = "ticket.annotated" if status == "written" else "ticket.annotate_failed"
         audit.append(session, actor=actor, action=action, payload={"error": error}, incident_sys_id=sys_id,
                      policy_version=d.policy_version, decision_id=decision_id)
-        _mark(session, delivery_id, "processed" if status == "written" else "failed", error)
         session.refresh(stored)
-        return stored
+
+    if lane_deps is not None:  # Phase 4: act on the decision
+        run_lane(incident, stored, d, decision_id, x, lane_deps)
+
+    with session_factory() as session:
+        _mark(session, delivery_id, "processed" if status == "written" else "failed", error)
+    return stored
 
 
 def _mark(session: Session, delivery_id: str, status: str, detail: str = "") -> None:
