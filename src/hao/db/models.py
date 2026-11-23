@@ -93,6 +93,48 @@ class ClientWebhookDelivery(Base):
 # ---------------------------------------------------------------- Human+AI operating model platform
 
 
+class HaoProcessedEvent(Base):
+    """Idempotency ledger for inbound webhooks: they are at-least-once, we must be exactly-once."""
+
+    __tablename__ = "hao_processed_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    delivery_id: Mapped[str] = mapped_column(String(64), unique=True)
+    event: Mapped[str] = mapped_column(String(40))
+    incident_sys_id: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="accepted")  # accepted | processed | ignored | failed
+    detail: Mapped[str] = mapped_column(Text, default="")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class HaoIntakeResult(Base):
+    """Output of intake (redact + classify). Stores redacted text only: no raw PII on the platform side."""
+
+    __tablename__ = "hao_intake_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    incident_sys_id: Mapped[str] = mapped_column(String(32), unique=True)
+    number: Mapped[str] = mapped_column(String(16), default="")
+    redacted_short_description: Mapped[str] = mapped_column(String(400), default="")
+    redacted_description: Mapped[str] = mapped_column(Text, default="")
+    pii_entities: Mapped[dict] = mapped_column(JSON, default=dict)  # counts per type, never values
+    category: Mapped[str] = mapped_column(String(80))
+    application: Mapped[str] = mapped_column(String(80), default="")
+    confidence: Mapped[float] = mapped_column(Float)
+    signals: Mapped[str] = mapped_column(String(300), default="")
+    classifier: Mapped[str] = mapped_column(String(60))
+    model: Mapped[str] = mapped_column(String(60), default="")
+    prompt_version: Mapped[str] = mapped_column(String(20), default="")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    classifier_error: Mapped[str] = mapped_column(Text, default="")
+    work_note_status: Mapped[str] = mapped_column(String(20), default="pending")  # written | failed
+    work_note_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class HaoDecision(Base):
     """One routing decision per ticket event: which autonomy level, and why."""
 

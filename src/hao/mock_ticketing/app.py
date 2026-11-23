@@ -68,7 +68,7 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
                webhook_backoff_s: float = 0.5, rng: random.Random | None = None) -> FastAPI:
     settings = settings or get_settings()
     engine = make_engine(settings.database_url)
-    init_db(engine)
+    init_db(engine, prefix="client_")
     session_factory = make_session_factory(engine)
     chaos_rng = rng or random.Random()
 
