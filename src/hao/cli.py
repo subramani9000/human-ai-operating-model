@@ -125,7 +125,11 @@ def golden_build(per_category: int = 20, data: Path = typer.Option(REPO_ROOT / "
 
 
 @eval_app.command("redaction")
-def eval_redaction(data: Path = typer.Option(REPO_ROOT / "data" / "synthetic"), write: bool = True):
+def eval_redaction(
+    data: Path = typer.Option(REPO_ROOT / "data" / "synthetic"),
+    write: bool = True,
+    min_recall: float = typer.Option(0.99, help="Exit 1 if overall recall falls below this (CI gate)"),
+):
     """Measure PII leakage (recall), over-redaction (precision) and utility on the full dataset."""
     from hao.evals.redaction_eval import evaluate_redaction
 
@@ -146,6 +150,9 @@ def eval_redaction(data: Path = typer.Option(REPO_ROOT / "data" / "synthetic"), 
     if write:
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
         (REPORT_DIR / "redaction-synthetic.md").write_text(md + "\n", encoding="utf-8")
+    if rep.recall["ALL"] < min_recall:
+        typer.secho(f"Redaction recall {rep.recall['ALL']:.4f} is below {min_recall}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
 
 
 @eval_app.command("classify")
