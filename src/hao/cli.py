@@ -14,6 +14,12 @@ app = typer.Typer(help="Human+AI operating model toolkit", no_args_is_help=True)
 policy_app = typer.Typer(help="Operating-model policy", no_args_is_help=True)
 db_app = typer.Typer(help="Database", no_args_is_help=True)
 mock_app = typer.Typer(help="Mock client ticketing system", no_args_is_help=True)
+golden_app = typer.Typer(help="Golden evaluation sets", no_args_is_help=True)
+eval_app = typer.Typer(help="Evaluations", no_args_is_help=True)
+platform_app = typer.Typer(help="Human+AI platform service (our side of the integration)", no_args_is_help=True)
+app.add_typer(golden_app, name="golden")
+app.add_typer(eval_app, name="eval")
+app.add_typer(platform_app, name="platform")
 app.add_typer(policy_app, name="policy")
 app.add_typer(db_app, name="db")
 app.add_typer(mock_app, name="mock")
@@ -89,9 +95,11 @@ def db_init():
     """Create all tables in DATABASE_URL."""
     from hao.db.session import init_db, make_engine
 
-    url = get_settings().database_url
-    init_db(make_engine(url))
-    typer.echo(f"Initialised schema at {url.split('@')[-1]}")
+    s = get_settings()
+    init_db(make_engine(s.database_url), prefix="client_")
+    init_db(make_engine(s.platform_database_url or s.database_url), prefix="hao_")
+    typer.echo(f"Initialised client schema at {s.database_url.split('@')[-1]}")
+    typer.echo(f"Initialised platform schema at {(s.platform_database_url or s.database_url).split('@')[-1]}")
 
 
 @mock_app.command("serve")
@@ -100,6 +108,93 @@ def mock_serve(host: str = "0.0.0.0", port: int = 8001, reload: bool = False):
     import uvicorn
 
     uvicorn.run("hao.mock_ticketing.app:create_app", factory=True, host=host, port=port, reload=reload)
+
+
+GOLDEN_DIR = REPO_ROOT / "data" / "golden"
+REPORT_DIR = REPO_ROOT / "docs" / "eval-reports"
+
+
+@golden_app.command("build")
+def golden_build(per_category: int = 20, data: Path = typer.Option(REPO_ROOT / "data" / "synthetic")):
+    """Build the stratified golden set (category x style) from the synthetic dataset."""
+    from hao.evals.golden import build_golden, write_golden
+
+    rows = build_golden(_read_jsonl(data / "tickets.jsonl"), _read_jsonl(data / "labels.jsonl"), per_category)
+    write_golden(rows, GOLDEN_DIR / "golden_v1.jsonl")
+    typer.echo(f"Wrote {len(rows)} tickets to {GOLDEN_DIR / 'golden_v1.jsonl'}")
+
+
+@eval_app.command("redaction")
+def eval_redaction(data: Path = typer.Option(REPO_ROOT / "data" / "synthetic"), write: bool = True):
+    """Measure PII leakage (recall), over-redaction (precision) and utility on the full dataset."""
+    from hao.evals.redaction_eval import evaluate_redaction
+
+    rep = evaluate_redaction(_read_jsonl(data / "tickets.jsonl"), _read_jsonl(data / "labels.jsonl"))
+    lines = ["# Redaction eval", "", f"{rep.n_tickets} tickets · {sum(rep.found.values())} PII values present "
+             f"verbatim in text · {rep.spans_total} redacted spans", "",
+             "| PII type | Present | Leaked | Recall |", "|---|---|---|---|"]
+    lines += [f"| {t} | {rep.found.get(t, sum(rep.found.values()))} | "
+              f"{rep.leaked.get(t, sum(rep.leaked.values()))} | {100 * r:.2f}% |" for t, r in rep.recall.items()]
+    lines += ["", f"- **Precision** (redacted spans that were real PII, typo-tolerant): {100 * rep.precision:.2f}%",
+              f"- **Utility** (application name still readable after redaction): {100 * rep.utility:.2f}%", ""]
+    if rep.leak_examples:
+        lines += ["## Leaks", "", *[f"- {e['number']}: {e['type']}" for e in rep.leak_examples], ""]
+    if rep.false_positive_examples:
+        lines += ["## Over-redaction examples", "", *[f"- {e}" for e in rep.false_positive_examples], ""]
+    md = "\n".join(lines)
+    typer.echo(md)
+    if write:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        (REPORT_DIR / "redaction-synthetic.md").write_text(md + "\n", encoding="utf-8")
+
+
+@eval_app.command("classify")
+def eval_classify(
+    classifier: str = typer.Option("keyword", help="keyword | claude"),
+    golden: str = typer.Option("golden_v1", help="golden_v1 (synthetic, 300) | hard_v1 (hand-written, 45)"),
+    limit: int = typer.Option(0, help="Only the first N tickets (0 = all)"),
+    workers: int = typer.Option(4, help="Parallel requests for LLM classifiers"),
+    write: bool = typer.Option(True, help="Write docs/eval-reports/<classifier>-<golden>.md"),
+):
+    """Run a classifier over a golden set and report accuracy, risk-downgrades, calibration and cost."""
+    from hao.evals.classification_eval import evaluate_classification, render_markdown, run_classifier
+    from hao.evals.golden import read_golden
+    from hao.intake.classifiers import make_classifier
+
+    rows = read_golden(GOLDEN_DIR / f"{golden}.jsonl")
+    rows = rows[:limit] if limit else rows
+    clf = make_classifier(classifier)
+    preds = run_classifier(clf, rows, workers=workers if classifier != "keyword" else 1)
+    report = evaluate_classification(rows, preds)
+    md = render_markdown(report, golden, get_settings().usd_to_inr)
+    typer.echo(md)
+    if write and not limit:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        name = f"{classifier}-{golden}.md"
+        (REPORT_DIR / name).write_text(md, encoding="utf-8")
+        typer.secho(f"\nWrote {REPORT_DIR / name}", fg=typer.colors.GREEN)
+
+
+@platform_app.command("serve")
+def platform_serve(host: str = "0.0.0.0", port: int = 8002, classifier: str = "keyword"):
+    """Run the platform webhook receiver (intake: verify → dedupe → redact → classify → work note)."""
+    import os
+
+    import uvicorn
+
+    os.environ["HAO_CLASSIFIER"] = classifier
+    uvicorn.run("hao.platform.app:create_app_from_env", factory=True, host=host, port=port)
+
+
+@platform_app.command("subscribe")
+def platform_subscribe():
+    """Register the platform's webhook URL with the client ticketing system."""
+    from hao.adapters.servicenow import ServiceNowAdapter
+
+    s = get_settings()
+    with ServiceNowAdapter.from_settings(s) as adapter:
+        sub = adapter.subscribe_webhook(f"{s.platform_public_url}/webhooks/ticketing")
+    typer.echo(f"Subscribed: {sub}")
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:

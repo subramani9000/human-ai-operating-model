@@ -24,3 +24,9 @@ jobs:
         run: hao generate --n 5000 --seed 42 --sample 200
       - name: Tests
         run: pytest -q
+      - name: Eval — redaction (fails the build if PII leaks; see tests/test_redaction.py)
+        run: hao eval redaction --no-write
+      - name: Eval — keyword baseline on both golden sets
+        run: |
+          hao eval classify --classifier keyword --golden golden_v1 --no-write | head -20
+          hao eval classify --classifier keyword --golden hard_v1 --no-write | head -20

@@ -26,5 +26,22 @@ services:
       postgres:
         condition: service_healthy
 
+  platform:
+    build: .
+    command: ["hao", "platform", "serve", "--port", "8002", "--classifier", "${HAO_CLASSIFIER:-keyword}"]
+    environment:
+      PLATFORM_DATABASE_URL: postgresql+psycopg://hao:hao@postgres:5432/hao
+      TICKETING_BASE_URL: http://mock-ticketing:8001
+      PLATFORM_PUBLIC_URL: http://platform:8002
+      MOCK_API_KEY: ${MOCK_API_KEY:-kaveri-dev-key}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-kaveri-webhook-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports: ["8002:8002"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-ticketing:
+        condition: service_started
+
 volumes:
   pgdata:
