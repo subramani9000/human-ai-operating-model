@@ -10,16 +10,18 @@ Each phase ends with working code, tests, an update to the [FDE journal](fde-jou
 - [x] Data model (`client_*` / `hao_*`) and validated policy files
 - [x] CI: lint, policy validation, tests
 
-## ⏳ Phase 2: Intake (redaction and classification)
-- [ ] `TicketingAdapter` interface + adapter for the mock API (retries, idempotent webhook receiver)
-- [ ] PII redaction: Microsoft Presidio plus custom recognisers (`KVR-#####` employee IDs, +91 phones), with a reversible token vault kept inside the client boundary
-- [ ] Redaction eval: recall per PII type against `labels.jsonl` (target ≥ 99% on phones and employee IDs)
-- [ ] Classifier on Claude Haiku 5.5 with structured output: category, application, priority, confidence
-- [ ] 300-ticket golden set (stratified by category × style); report accuracy, per-class F1, confidence calibration
-- [ ] Baseline comparison: keyword rules vs. LLM. Is the LLM worth its cost?
-- [ ] LLM cost/latency logging per call
+## ✅ Phase 2: Intake (redaction and classification)
+- [x] `TicketingAdapter` interface + ServiceNow adapter (retries with jitter, typed incidents, silent-ignore detection)
+- [x] Platform webhook receiver: signature check, idempotency ledger, loop protection
+- [x] PII redaction: context-aware regex + name heuristics, consistent tokens, in-memory vault ([ADR 0004](adr/0004-context-aware-redaction.md))
+- [x] Redaction eval: recall per PII type, precision, utility
+- [x] Classifier on Claude Haiku 5.5 with forced tool use; fail-safe to `unknown`
+- [x] Golden sets: `golden_v1` (300 synthetic, stratified) + `hard_v1` (45 hand-written, incl. prompt injection)
+- [x] Keyword baseline vs LLM harness: accuracy, risk-downgrade errors, calibration, by-style, latency, cost
+- [x] LLM cost/latency recorded per call and per intake result
+- [ ] **Run the Claude eval on both sets and commit the reports** (needs `ANTHROPIC_API_KEY`)
 
-## Phase 3: Policy engine + audit log
+## ⏳ Phase 3: Policy engine + audit log
 - [ ] Decision function: category level → application cap → rules → clamp; records applied rules
 - [ ] Hash-chained `hao_audit_events` with a `hao audit verify` command that detects tampering
 - [ ] Property-based tests: no input can ever produce A3 on FinCore/PeopleDesk

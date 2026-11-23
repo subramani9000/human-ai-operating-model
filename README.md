@@ -41,8 +41,8 @@ The operating model is **code**: [`policy/autonomy.yaml`](policy/autonomy.yaml) 
 | Phase | Scope | Status |
 |---|---|---|
 | **1. Discovery and foundations** | Engagement docs, synthetic messy dataset, mock ServiceNow-style API, data model, validated policy | ✅ Done |
-| 2. Intake | PII redaction (Presidio + custom recognisers), Claude-based classifier, golden-set evals | ⏳ Next |
-| 3. Policy engine + audit | Autonomy decisions, hash-chained tamper-evident audit log | |
+| **2. Intake** | Ticketing adapter, idempotent webhook receiver, PII redaction, keyword + Claude classifiers, golden-set evals | ✅ Done |
+| 3. Policy engine + audit | Autonomy decisions, hash-chained tamper-evident audit log | ⏳ Next |
 | 4. Agent lanes | LangGraph workflows for A3/A2/A1, handoff packets, review console | |
 | 5. Learning loop | Feedback capture, autonomy controller, leadership dashboard | |
 | 6. Hardening | Docker, CI eval gates, Langfuse tracing, runbook, pilot readout | |
@@ -61,11 +61,32 @@ pip install -e ".[dev]"
 hao policy validate      # check the operating-model policy
 hao generate             # 5,000 synthetic tickets + ground-truth labels (seed 42)
 hao profile              # data-quality profile of the dataset
-pytest -q                # 32 tests
-hao mock serve           # mock client ticketing API → http://localhost:8001/docs
+pytest -q                # 71 tests
+hao eval redaction       # PII leakage report
+hao eval classify --golden hard_v1   # keyword baseline on hand-written tickets
 ```
 
-Or with Docker (Postgres + mock API): `docker compose up --build`
+### Run the end-to-end flow
+
+```bash
+hao mock serve                 # terminal 1: simulated client ticketing system  → :8001/docs
+hao platform serve             # terminal 2: our platform (webhooks → intake)  → :8002/docs
+hao platform subscribe         # terminal 3: register the webhook
+curl -X POST localhost:8001/api/now/table/incident -H 'X-API-Key: kaveri-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"short_description": "PeopleDesk payroll module access venum", "caller_id": "Priya Raman"}'
+```
+
+Within a second the ticket gets a work note written back by the platform:
+
+```
+[AI triage · keyword-v1] category: payroll_access · application: PeopleDesk · confidence 0.62.
+Suggestion only, no action taken (autonomy routing arrives in Phase 3).
+```
+
+To use Claude instead of keyword rules, set `ANTHROPIC_API_KEY` in `.env` and run `hao platform serve --classifier claude`.
+
+Or with Docker (Postgres + both services): `docker compose up --build`
 
 ### Talk to the mock client system
 
@@ -114,6 +135,15 @@ Style mix: formal 45.2%, terse 24.4%, tanglish 13.3%, hinglish 10.0%, angry 7.1%
 
 Tickets like *"WMS-Pro open panna 'Scanner sync failed: code WMS-4021' nu error varudhu"*, forwarded email chains, signatures with phone numbers and employee IDs, and near-duplicates from impatient callers. Ground-truth labels live in a **separate file** so evals never leak into the system under test.
 
+**The evals are designed to catch their own blind spots** ([ADR 0005](docs/adr/0005-classifier-evaluation.md)):
+
+| Keyword baseline on… | Accuracy | Risk-downgrade errors |
+|---|---|---|
+| `golden_v1`: 300 synthetic tickets | 94.7% | 14 |
+| `hard_v1`: 45 hand-written tickets, incl. prompt injection | **26.7%** | 5 |
+
+Synthetic data flatters whoever wrote the generator, so every classifier is measured on both sets. The headline metric is **risk-downgrade errors** (for example, a payroll ticket read as a password reset), because those are the errors that would route high-risk work to a low-risk autonomy lane. See [eval reports](docs/eval-reports/).
+
 **The policy can't be configured into something unsafe.** Validation rejects a payroll category set to A3, a category without a named owner, or controller thresholds that would make autonomy flap. CI runs `hao policy validate` on every PR.
 
 ---
@@ -122,15 +152,20 @@ Tickets like *"WMS-Pro open panna 'Scanner sync failed: code WMS-4021' nu error 
 
 ```
 docs/                     The engagement trail: problem, discovery, stakeholders, design, ADRs, journal
-policy/                   autonomy.yaml (levels, caps, rules), ownership.yaml (named owners)
+policy/                   autonomy.yaml (levels, caps, rules), ownership.yaml (owners), taxonomy.yaml (categories)
 src/hao/
   synthetic/              Deterministic messy-ticket generator + noise model
   mock_ticketing/         ServiceNow-style client API, signed webhooks, chaos injection
+  adapters/               TicketingAdapter protocol + ServiceNow adapter (retries, typed, read-after-write)
+  platform/               Webhook receiver + intake pipeline (verify → dedupe → redact → classify → note)
+  intake/                 PII redaction, taxonomy, keyword + Claude classifiers
+  evals/                  Golden sets, redaction eval, classification eval
   policy/                 Policy schema + cross-validation
   db/                     Data model (client_* = simulated client, hao_* = platform)
   cli.py                  `hao` command
 data/synthetic/           Committed 200-ticket sample (full set via `hao generate`)
-tests/                    Generator, policy and API behaviour
+data/golden/              golden_v1 (300 synthetic, stratified) and hard_v1 (45 hand-written)
+tests/                    Generator, policy, API, adapter, redaction, classifiers, end-to-end
 ```
 
 ## FDE skills this project exercises
@@ -139,7 +174,9 @@ tests/                    Generator, policy and API behaviour
 - **Integrating with systems you don't own:** adapters, idempotency, signed webhooks, failure injection
 - **Getting unblocked:** synthetic data with exact ground truth while legal reviews historical data
 - **Governance as engineering:** policy-as-code, named owners, auditable decisions
-- **Evidence-driven autonomy:** evals that decide what AI is allowed to do (Phases 2–5)
+- **Evaluating honestly:** a second, hand-written eval set and metrics weighted by harm, not just accuracy
+- **Building safe LLM integrations:** redaction before the model, forced structured output, prompt-injection handling, fail-safe defaults
+- **Evidence-driven autonomy:** evals that decide what AI is allowed to do (Phases 3–5)
 
 Lessons learned along the way are in the [FDE journal](docs/fde-journal.md).
 

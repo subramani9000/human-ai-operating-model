@@ -50,7 +50,8 @@ flowchart TD
 | Mock ticketing API (client system) | **1** ✅ | ServiceNow-style REST, signed webhooks, injectable failures |
 | Synthetic messy dataset + ground-truth labels | **1** ✅ | Mirrors discovery findings; deterministic by seed |
 | Data model + policy schema/validation | **1** ✅ | SQLAlchemy models; Pydantic-validated YAML |
-| Intake: redaction (Presidio + custom recognisers) and classifier | 2 | Claude Haiku 5.5; golden-set evals |
+| Ticketing adapter + webhook receiver (idempotent, loop-safe) | **2** ✅ | `src/hao/adapters`, `src/hao/platform` |
+| Intake: context-aware redaction + classifier | **2** ✅ | Keyword baseline + Claude Haiku 5.5; golden-set evals ([ADR 0004](adr/0004-context-aware-redaction.md), [0005](adr/0005-classifier-evaluation.md)) |
 | Policy engine + hash-chained audit log | 3 | |
 | Agent lanes (LangGraph), review console | 4 | Claude Sonnet 5.5 for resolution and handoffs |
 | Feedback loop, autonomy controller, dashboard | 5 | |
