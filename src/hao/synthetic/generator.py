@@ -154,6 +154,7 @@ def generate(cfg: GeneratorConfig | None = None) -> tuple[list[dict], list[dict]
         opened = _timestamp(cfg, rng, spec.month_end_multiplier)
         noise_applied: list[str] = []
         pii_types: list[str] = []
+        pii_values: list[dict] = []  # exact values, so redaction recall can be measured
         duplicate_of = None
 
         # Near-duplicate: same caller re-raises the same issue shortly after (different wording).
@@ -179,14 +180,18 @@ def generate(cfg: GeneratorConfig | None = None) -> tuple[list[dict], list[dict]
         if rng.random() < cfg.p_signature:
             body = f"{body}\n{noise.signature(emp.name, emp.title, emp.phone, emp.emp_id, emp.city, rng)}"
             pii_types += ["person_name", "phone_number", "employee_id"]
+            pii_values += [{"type": "person_name", "value": emp.name}, {"type": "phone_number", "value": emp.phone},
+                           {"type": "employee_id", "value": emp.emp_id}]
             noise_applied.append("signature")
         if rng.random() < 0.08:
             body += f"\nPlease reach me on my personal mail {emp.personal_email} as Outlook is down."
             pii_types.append("personal_email")
+            pii_values.append({"type": "personal_email", "value": emp.personal_email})
         if rng.random() < cfg.p_forwarded:
             mgr = rng.choice(employees)
             body = noise.forwarded_chain(body, mgr.name, mgr.email, rng)
             pii_types += ["person_name", "email_address"]
+            pii_values += [{"type": "person_name", "value": mgr.name}, {"type": "email_address", "value": mgr.email}]
             noise_applied.append("forwarded")
         if rng.random() < cfg.p_typos:
             new_short, new_body = noise.add_typos(short, rng), noise.add_typos(body, rng)
@@ -204,6 +209,7 @@ def generate(cfg: GeneratorConfig | None = None) -> tuple[list[dict], list[dict]
         if rng.random() < cfg.p_empty_description:
             body = ""
             pii_types = []
+            pii_values = []
             noise_applied.append("empty_description")
 
         # What the caller selected on the portal, frequently unhelpful.
@@ -264,6 +270,7 @@ def generate(cfg: GeneratorConfig | None = None) -> tuple[list[dict], list[dict]
             "style": style,
             "duplicate_of": duplicate_of,
             "pii_types": sorted(set(pii_types)),
+            "pii_values": pii_values,
             "noise": noise_applied,
         })
 
