@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16   # pgvector is used for knowledge search from Phase 2
+    environment:
+      POSTGRES_USER: hao
+      POSTGRES_PASSWORD: hao
+      POSTGRES_DB: hao
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hao"]
+      interval: 5s
+      retries: 10
+
+  mock-ticketing:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://hao:hao@postgres:5432/hao
+      MOCK_API_KEY: ${MOCK_API_KEY:-kaveri-dev-key}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-kaveri-webhook-secret}
+      MOCK_FAILURE_RATE: ${MOCK_FAILURE_RATE:-0.0}
+      MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-0}
+      MOCK_WEBHOOK_DUPLICATE_RATE: ${MOCK_WEBHOOK_DUPLICATE_RATE:-0.0}
+    ports: ["8001:8001"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
