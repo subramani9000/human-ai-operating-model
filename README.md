@@ -43,8 +43,8 @@ The operating model is **code**: [`policy/autonomy.yaml`](policy/autonomy.yaml) 
 | **1. Discovery and foundations** | Engagement docs, synthetic messy dataset, mock ServiceNow-style API, data model, validated policy | ✅ Done |
 | **2. Intake** | Ticketing adapter, idempotent webhook receiver, PII redaction, keyword + Claude classifiers, golden-set evals | ✅ Done |
 | **3. Policy engine + audit** | Monotone autonomy decisions with explanations, tripwires, property tests, hash-chained audit log, policy simulation | ✅ Done |
-| 4. Agent lanes | LangGraph workflows for A3/A2/A1, handoff packets, review console | ⏳ Next |
-| 5. Learning loop | Feedback capture, autonomy controller, leadership dashboard | |
+| **4. Agent lanes** | Playbooks, guarded tools, drafts with guardrails, handoff packets, review console, QA sampling | ✅ Done |
+| 5. Learning loop | Feedback capture, autonomy controller, leadership dashboard | ⏳ Next |
 | 6. Hardening | Docker, CI eval gates, Langfuse tracing, runbook, pilot readout | |
 
 See [docs/roadmap.md](docs/roadmap.md) for details.
@@ -61,7 +61,7 @@ pip install -e ".[dev]"
 hao policy validate      # check the operating-model policy
 hao generate             # 5,000 synthetic tickets + ground-truth labels (seed 42)
 hao profile              # data-quality profile of the dataset
-pytest -q                # 115 tests (incl. property-based safety invariants)
+pytest -q                # 135 tests (incl. property-based safety invariants and end-to-end lanes)
 hao eval redaction       # PII leakage report
 hao eval classify --golden hard_v1   # keyword baseline on hand-written tickets
 hao policy simulate --promote password_reset=A3   # what would a promotion do?
@@ -72,25 +72,44 @@ hao audit verify         # walk the tamper-evident audit chain
 
 ```bash
 hao mock serve                 # terminal 1: simulated client ticketing system  → :8001/docs
-hao platform serve             # terminal 2: our platform (webhooks → intake)  → :8002/docs
+hao platform serve             # terminal 2: our platform (webhooks → lanes)   → :8002/console
 hao platform subscribe         # terminal 3: register the webhook
 curl -X POST localhost:8001/api/now/table/incident -H 'X-API-Key: kaveri-dev-key' \
   -H 'Content-Type: application/json' \
-  -d '{"short_description": "PeopleDesk payroll module access venum", "caller_id": "Priya Raman"}'
+  -d '{"short_description": "Password reset request for SSO",
+       "description": "My SSO password expired over the weekend. Kindly reset it.",
+       "caller_id": "Priya Raman", "caller_email": "priya.raman@kaveri.example", "priority": "3"}'
 ```
 
-Within a second the ticket gets a work note written back by the platform:
+Password reset is at **A2**, so the platform triages it, plans the actions from its playbook, drafts a reply and waits:
 
 ```
 [AI triage · keyword-v1] category: password_reset · application: SSO · confidence 0.95
 Autonomy: A2 (AI drafts, human approves). category default.
 Accountable owner: Priya Nair · suggested group: SD-L1 · policy 2026.11-pilot (c17c371b2e93)
-No action taken yet: agent lanes arrive in Phase 4.
+[AI draft · awaiting approval] http://localhost:8002/console/items/1
+Planned actions: identity.reset_password, customer.reply, incident.resolve
 ```
 
-`GET localhost:8002/decisions/<sys_id>` returns the decision, every policy step that produced it, and its audit trail. Edit any audit row in the database and `hao audit verify` reports exactly which event was changed.
+Open **http://localhost:8002/console**, approve it, and the actions run under the reviewer's name: the client's IAM resets the password (credential sent by SMS, never seen by the AI), the user gets the reply, and the ticket is resolved:
 
-To use Claude instead of keyword rules, set `ANTHROPIC_API_KEY` in `.env` and run `hao platform serve --classifier claude`.
+```
+comment  user:priya.nair@kaveri.example | Hi Priya Raman, we've reset your SSO password. A temporary password…
+state 6  | Password reset via IAM; temporary password delivered by SMS. KB0010001
+```
+
+`GET localhost:8002/decisions/<sys_id>` returns the decision, every policy step behind it, and its audit trail. Edit any audit row in the database and `hao audit verify` reports exactly which event was changed.
+
+| Level | What the platform does |
+|---|---|
+| **A0** | Nothing beyond the triage note. A human owns it end to end |
+| **A1** | Routes to the right group and posts a **handoff packet**: summary, KB article, similar tickets, next step |
+| **A2** | Plans actions **from the playbook**, drafts the reply, waits in the review console; runs under the approver's name |
+| **A3** | Executes the playbook as the agent; a sample goes to **QA review** |
+
+Anything unexpected (no playbook, software not in the catalogue, a draft failing its guardrails, a tool error) falls back to the A1 handoff packet and never to more autonomy ([ADR 0008](docs/adr/0008-agent-lanes-and-tools.md)).
+
+To use Claude, set `ANTHROPIC_API_KEY` in `.env` and run `hao platform serve --classifier claude --drafter claude`.
 
 Or with Docker (Postgres + both services): `docker compose up --build`
 
@@ -165,12 +184,13 @@ Synthetic data flatters whoever wrote the generator, so every classifier is meas
 
 ```
 docs/                     The engagement trail: problem, discovery, stakeholders, design, ADRs, journal
-policy/                   autonomy.yaml (levels, caps, rules), ownership.yaml (owners), taxonomy.yaml (categories)
+policy/                   autonomy.yaml (levels, caps, rules) · ownership.yaml · taxonomy.yaml · playbooks.yaml (allowed actions)
 src/hao/
   synthetic/              Deterministic messy-ticket generator + noise model
   mock_ticketing/         ServiceNow-style client API, signed webhooks, chaos injection
   adapters/               TicketingAdapter protocol + ServiceNow adapter (retries, typed, read-after-write)
-  platform/               Webhook receiver + intake pipeline (verify → dedupe → redact → classify → note)
+  platform/               Webhook receiver, intake pipeline, review console
+  agents/                 Lanes, playbooks, guarded tools, BM25 retrieval, drafters + guardrails
   intake/                 PII redaction, taxonomy, keyword + Claude classifiers
   evals/                  Golden sets, redaction eval, classification eval
   policy/                 Policy schema + validation, decision engine, simulation
@@ -190,6 +210,7 @@ tests/                    Generator, policy, API, adapter, redaction, classifier
 - **Governance as engineering:** policy-as-code, named owners, auditable decisions
 - **Evaluating honestly:** a second, hand-written eval set and metrics weighted by harm, not just accuracy
 - **Building safe LLM integrations:** redaction before the model, forced structured output, prompt-injection handling, fail-safe defaults
+- **Human-in-the-loop that people trust:** the LLM writes words and reviewed playbooks pick the actions; approvals re-check policy and run under the approver's name; the client's own IAM is a second lock
 - **Evidence-driven autonomy:** evals that decide what AI is allowed to do (Phases 3–5)
 
 Lessons learned along the way are in the [FDE journal](docs/fde-journal.md).

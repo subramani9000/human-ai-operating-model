@@ -30,14 +30,17 @@ Each phase ends with working code, tests, an update to the [FDE journal](fde-jou
 - [x] `hao policy simulate`: over/under-autonomy vs intended, rule ablation, what-if promotions
 - [ ] Re-run the simulation with the Claude classifier (needs `ANTHROPIC_API_KEY`)
 
-## ⏳ Phase 4: Agent lanes
-- [ ] LangGraph workflow with human-in-the-loop interrupts for A2
-- [ ] A3 tools against the mock API (reset, unlock, resolve with close notes, reassign)
-- [ ] A1 handoff packet: summary, similar resolved tickets (pgvector), checks done, suggested next step
-- [ ] Review console (Streamlit): approve / edit / reject with reason codes
-- [ ] Claude Sonnet 5.5 for resolution drafting and handoff summaries
+## ✅ Phase 4: Agent lanes
+- [x] Lanes A0–A3 over a durable work-item state machine (chosen over LangGraph: [ADR 0008](adr/0008-agent-lanes-and-tools.md))
+- [x] Playbooks: per-category tool allowlists; "no playbook, no autonomy"
+- [x] Tools against the mock: password reset, unlock, reply, resolve, software request, routing. Guarded at execution time, plus client-side IAM refusal on HR/finance apps
+- [x] A1 handoff packet: summary, KB article, similar tickets (BM25), suggested next step
+- [x] Drafters: template + Claude Sonnet 5.5, with `check_draft` guardrails
+- [x] Review console: approve / edit / reject with reason codes; re-checks policy; runs under the approver's name ([ADR 0009](adr/0009-review-console.md))
+- [x] QA sampling of A3 executions, pass / fail feedback
+- [ ] Run the Claude drafter on real-looking tickets and review its drafts in the console (needs `ANTHROPIC_API_KEY`)
 
-## Phase 5: Learning loop
+## ⏳ Phase 5: Learning loop
 - [ ] Feedback capture from the console and from reopen events in the ticketing system
 - [ ] Autonomy controller: nightly precision per category, promotion proposals, automatic demotion
 - [ ] Leadership dashboard: volume by level, precision, reopen rate, resolution time, cost per ticket, **human hours redirected**

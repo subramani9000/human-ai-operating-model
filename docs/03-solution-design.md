@@ -54,7 +54,7 @@ flowchart TD
 | Ticketing adapter + webhook receiver (idempotent, loop-safe) | **2** ✅ | `src/hao/adapters`, `src/hao/platform` |
 | Intake: context-aware redaction + classifier | **2** ✅ | Keyword baseline + Claude Haiku 5.5; golden-set evals ([ADR 0004](adr/0004-context-aware-redaction.md), [0005](adr/0005-classifier-evaluation.md)) |
 | Policy engine + hash-chained audit log | **3** ✅ | Monotone steps, tripwires, property tests ([ADR 0006](adr/0006-policy-engine-semantics.md), [0007](adr/0007-hash-chained-audit-log.md)) |
-| Agent lanes (LangGraph), review console | 4 | Claude Sonnet 5.5 for resolution and handoffs |
+| Agent lanes, playbooks, guarded tools, review console | **4** ✅ | DB-backed state machine, Claude Sonnet 5.5 drafter ([ADR 0008](adr/0008-agent-lanes-and-tools.md), [0009](adr/0009-review-console.md)) |
 | Feedback loop, autonomy controller, dashboard | 5 | |
 | Docker, CI eval gates, Langfuse, runbook, pilot readout | 6 | |
 

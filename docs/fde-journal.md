@@ -73,4 +73,28 @@ A running log of what this engagement teaches about forward-deployed engineering
 ---
 
 ## Phase 4: Agent lanes
+
+**What was built**
+- Lanes A0–A3 over a durable `hao_work_items` state machine: route, plan, draft, guard, wait, execute, QA-sample
+- `policy/playbooks.yaml`: per-category tool allowlists; "no playbook, no autonomy"
+- Guarded tools, checked at execution time: level, allowlist, privileged-app guard. The mock's IAM refuses AI actors on HR/finance apps too
+- Template and Claude Sonnet 5.5 drafters; `check_draft` guardrails for PII, invented tokens, credentials and links
+- BM25 retrieval over the client KB and past tickets for handoff packets
+- Review console: approve / edit / reject with reason codes, re-checked against the live policy, executed under the approver's name
+- First full loop on the live services: ticket → A2 draft → approve in the console → password reset by IAM, reply posted, ticket resolved, 12 audit events verified
+
+**FDE lessons**
+1. **Drop the framework when the client would only be running your state twice.** LangGraph was in the plan. The flow turned out short and fixed, and the approval state had to live in a table audit and the console already read. A 300-line state machine over that table is easier for Kaveri to run and debug. Changing the plan is fine; writing down why (ADR 0008) is the part that matters.
+2. **Let the model write, not decide.** Keeping actions in a reviewed playbook means a reviewer sees exactly what will happen before approving, and prompt injection can at worst produce a bad *sentence*, which the guardrails then check.
+3. **Don't be the only lock on the door.** Our guard refuses AI password resets on PeopleDesk, and so does the client's IAM. If our policy, playbook or code is ever wrong, the client's own control still holds. FDEs should push for controls on the client's side, not just their own.
+4. **Guardrails produce false positives.** The first credential filter flagged "your temporary password is on its way by SMS" as a leaked password, which would have blocked every password-reset reply. The fix was to match the *shape* of a secret (digits or symbols after "password is"). Every guardrail needs a test for the normal sentence it must *not* block.
+5. **State changes while humans think.** A draft can sit for hours, and the category might be demoted in the meantime. Approval re-runs the policy at approval time, so an old draft can't sneak through under an old rule.
+6. **PII can stay out of your database if you design for it.** Plans store the application name, not the user's email; the email is read live from the client at execution. Deterministic redaction rebuilds the same tokens at approval time, so the vault never needs to be stored.
+
+**What I'd do differently**
+- _(add your own reflections here)_
+
+---
+
+## Phase 5: Learning loop
 _(to be written)_
