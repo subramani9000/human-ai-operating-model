@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hao"
-version = "0.2.0"
+version = "0.3.0"
 description = "Human+AI operating model: a simulated FDE engagement for an enterprise service desk"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,7 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
 llm = ["anthropic>=0.40"]
-dev = ["pytest>=8.0", "ruff>=0.4", "anthropic>=0.40"]
+dev = ["pytest>=8.0", "ruff>=0.4", "anthropic>=0.40", "hypothesis>=6.100"]
 
 [project.scripts]
 hao = "hao.cli:app"
