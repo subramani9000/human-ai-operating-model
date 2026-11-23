@@ -111,13 +111,41 @@ class ServiceNowAdapter:
 
     def update_incident(self, sys_id: str, fields: dict[str, str]) -> Incident:
         result = self._request("PATCH", f"/api/now/table/incident/{sys_id}", json=fields).json()["result"]
-        not_applied = {k: v for k, v in fields.items() if k != "work_notes" and result.get(k) != str(v)}
+        journal = {"work_notes", "comments"}
+        not_applied = {k: v for k, v in fields.items() if k not in journal and result.get(k) != str(v)}
         if not_applied:
             raise FieldNotApplied(f"client system ignored fields on {sys_id}: {sorted(not_applied)}")
         return to_incident(result)
 
     def add_work_note(self, sys_id: str, note: str) -> None:
         self._request("PATCH", f"/api/now/table/incident/{sys_id}", json={"work_notes": note})
+
+    def add_comment(self, sys_id: str, comment: str) -> None:
+        """Customer-visible reply (work notes are internal)."""
+        self._request("PATCH", f"/api/now/table/incident/{sys_id}", json={"comments": comment})
+
+    def resolve(self, sys_id: str, close_code: str, close_notes: str) -> Incident:
+        return self.update_incident(sys_id, {"state": "6", "close_code": close_code, "close_notes": close_notes})
+
+    def assign(self, sys_id: str, group: str) -> Incident:
+        return self.update_incident(sys_id, {"assignment_group": group})
+
+    def list_kb(self) -> list[dict]:
+        return self._request("GET", "/api/now/table/kb_knowledge").json()["result"]
+
+    def identity(self, action: str, user_email: str, application: str, sys_id: str) -> dict:
+        body = {"user_email": user_email, "application": application, "incident_sys_id": sys_id}
+        return self._request("POST", f"/api/x_kaveri/identity/{action}", json=body).json()["result"]
+
+    def request_software(self, package: str, user_email: str, sys_id: str) -> dict:
+        body = {"package": package, "user_email": user_email, "incident_sys_id": sys_id}
+        return self._request("POST", "/api/x_kaveri/software/requests", json=body).json()["result"]
+
+    def with_actor(self, actor: str) -> ServiceNowAdapter:
+        """Same connection, different actor: a human approver's actions are attributed to them."""
+        clone = ServiceNowAdapter(self._client, self._headers["X-API-Key"], actor=actor,
+                                  max_attempts=self._max_attempts, backoff_s=self._backoff_s, rng=self._rng)
+        return clone
 
     def subscribe_webhook(self, url: str) -> dict:
         return self._request("POST", "/api/x_kaveri/webhooks", json={"url": url}).json()["result"]
