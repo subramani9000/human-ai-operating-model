@@ -148,6 +148,10 @@ class HaoDecision(Base):
     risk_tier: Mapped[str] = mapped_column(String(20))
     confidence: Mapped[float] = mapped_column(Float)
     level: Mapped[str] = mapped_column(String(2))  # A0..A3
+    owner: Mapped[str] = mapped_column(String(60), default="")  # accountable owner key (ownership.yaml)
+    assignment_group: Mapped[str] = mapped_column(String(80), default="")
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    steps: Mapped[list] = mapped_column(JSON, default=list)
     policy_version: Mapped[str] = mapped_column(String(16))
     applied_rules: Mapped[list] = mapped_column(JSON, default=list)
     model: Mapped[str] = mapped_column(String(60), default="")
@@ -157,7 +161,7 @@ class HaoDecision(Base):
 
 
 class HaoAuditEvent(Base):
-    """Append-only, hash-chained audit log (Phase 3 adds chain verification)."""
+    """Append-only, hash-chained audit log. See hao.audit.log and ADR 0007."""
 
     __tablename__ = "hao_audit_events"
 
@@ -169,7 +173,7 @@ class HaoAuditEvent(Base):
     action: Mapped[str] = mapped_column(String(60))
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     policy_version: Mapped[str] = mapped_column(String(16), default="")
-    prev_hash: Mapped[str] = mapped_column(String(64))
+    prev_hash: Mapped[str] = mapped_column(String(64), unique=True)  # unique: the chain cannot fork
     hash: Mapped[str] = mapped_column(String(64), unique=True)
 
 
