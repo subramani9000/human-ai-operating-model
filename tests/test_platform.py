@@ -109,7 +109,8 @@ def test_new_ticket_is_triaged_and_annotated(wired):
     assert decision["decision"]["level"] == "A0" and decision["decision"]["owner"] == "network-lead"
     assert decision["decision"]["applied_rules"] == ["low-confidence-downgrade"]
     actions = [e["action"] for e in decision["audit_trail"]]
-    assert actions == ["intake.redacted", "intake.classified", "autonomy.decided", "ticket.annotated"]
+    assert actions == ["intake.redacted", "intake.classified", "autonomy.decided", "ticket.annotated",
+                       "lane.human_only"]
     assert "Anita" not in json.dumps(decision)
     assert platform.get("/audit/verify").json()["ok"] is True
     stored = json.dumps(result)
@@ -119,7 +120,7 @@ def test_new_ticket_is_triaged_and_annotated(wired):
     notes = mock.get(f"/api/now/table/incident/{inc['sys_id']}/work_notes", headers={"X-API-Key": KEY}).json()
     assert notes["result"][0]["author"] == "ai:test"
     note = notes["result"][0]["note"]
-    assert "vpn_access" in note and "Autonomy: A0" in note and "Joseph Mathew" in note and "No action taken" in note
+    assert "vpn_access" in note and "Autonomy: A0" in note and "Joseph Mathew" in note and "no AI action" in note
 
 
 def test_our_own_work_note_does_not_loop(wired):
