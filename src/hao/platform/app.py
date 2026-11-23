@@ -20,36 +20,50 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from hao.adapters.base import TicketingAdapter
+from hao.audit import log as audit
 from hao.config import Settings, get_settings
-from hao.db.models import HaoIntakeResult, HaoProcessedEvent
+from hao.db.models import HaoAuditEvent, HaoDecision, HaoIntakeResult, HaoProcessedEvent
 from hao.db.session import init_db, make_engine, make_session_factory
 from hao.intake.classifiers import Classifier, make_classifier
 from hao.intake.redaction import Redactor
 from hao.mock_ticketing.webhooks import verify
 from hao.platform.intake import process_created
+from hao.policy.schema import Policy, load_policy
 
 
 def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapter], classifier: Classifier,
-               redactor: Redactor | None = None) -> FastAPI:
+               redactor: Redactor | None = None, policy: Policy | None = None) -> FastAPI:
     engine = make_engine(settings.platform_database_url or settings.database_url)
     init_db(engine, prefix="hao_")
     session_factory = make_session_factory(engine)
     redactor = redactor or Redactor()
-    app = FastAPI(title="Human+AI operating model: platform", version="0.2.0")
+    policy = policy or load_policy(settings.policy_dir)
+    app = FastAPI(title="Human+AI operating model: platform", version="0.3.0")
     app.state.session_factory = session_factory
+    app.state.policy = policy
+
+    with session_factory() as session:  # record which policy version is live, once per change
+        last = session.scalar(select(HaoAuditEvent).where(HaoAuditEvent.action == "policy.loaded")
+                              .order_by(HaoAuditEvent.id.desc()).limit(1))
+        if last is None or last.policy_version != policy.version:
+            audit.append(session, incident_sys_id="", actor="system:platform", action="policy.loaded",
+                         payload={"label": policy.version_label,
+                                  "levels": {k: c.current_level.value for k, c in policy.categories.items()}},
+                         policy_version=policy.version)
 
     def run_intake(incident: dict, delivery_id: str) -> None:
         adapter = adapter_factory()
         try:
             process_created(incident, delivery_id=delivery_id, session_factory=session_factory, adapter=adapter,
-                            classifier=classifier, redactor=redactor)
+                            classifier=classifier, redactor=redactor, policy=policy, actor=settings.platform_actor)
         finally:
             if hasattr(adapter, "close"):
                 adapter.close()
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "classifier": classifier.name}
+        return {"status": "ok", "classifier": classifier.name, "policy": policy.version_label,
+                "policy_version": policy.version}
 
     @app.post("/webhooks/ticketing", status_code=202)
     async def receive(
@@ -92,6 +106,23 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
                 raise HTTPException(404, "not triaged")
             return {c.name: getattr(r, c.name) for c in HaoIntakeResult.__table__.columns}
 
+    @app.get("/decisions/{sys_id}")
+    def get_decision(sys_id: str):
+        """Everything audit asks for: what was decided, by what logic, on what data, by whom, when."""
+        with session_factory() as session:
+            d = session.scalar(select(HaoDecision).where(HaoDecision.incident_sys_id == sys_id)
+                               .order_by(HaoDecision.id.desc()).limit(1))
+            if d is None:
+                raise HTTPException(404, "no decision")
+            return {"decision": {c.name: getattr(d, c.name) for c in HaoDecision.__table__.columns},
+                    "audit_trail": audit.trail(session, sys_id)}
+
+    @app.get("/audit/verify")
+    def audit_verify(expected_head: str | None = None):
+        r = audit.verify(session_factory, expected_head)
+        return {"ok": r.ok, "events": r.events, "head_hash": r.head_hash, "broken_at_id": r.broken_at_id,
+                "reason": r.reason}
+
     @app.get("/metrics")
     def metrics():
         with session_factory() as session:
@@ -100,7 +131,8 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
             cats = dict(session.execute(select(HaoIntakeResult.category, func.count())
                                         .group_by(HaoIntakeResult.category)).all())
             avg_conf = session.scalar(select(func.avg(HaoIntakeResult.confidence)))
-        return {"events": events, "categories": cats, "avg_confidence": avg_conf}
+            levels = dict(session.execute(select(HaoDecision.level, func.count()).group_by(HaoDecision.level)).all())
+        return {"events": events, "categories": cats, "levels": levels, "avg_confidence": avg_conf}
 
     return app
 

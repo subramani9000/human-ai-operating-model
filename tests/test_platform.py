@@ -104,13 +104,22 @@ def test_new_ticket_is_triaged_and_annotated(wired):
                                          "Mob: +91 9840012345")
     result = platform.get(f"/intake/{inc['sys_id']}").json()
     assert result["category"] == "vpn_access" and result["work_note_status"] == "written"
+    decision = platform.get(f"/decisions/{inc['sys_id']}").json()
+    # vpn_access starts at A1; keyword confidence 0.68 < 0.80 triggers the low-confidence downgrade
+    assert decision["decision"]["level"] == "A0" and decision["decision"]["owner"] == "network-lead"
+    assert decision["decision"]["applied_rules"] == ["low-confidence-downgrade"]
+    actions = [e["action"] for e in decision["audit_trail"]]
+    assert actions == ["intake.redacted", "intake.classified", "autonomy.decided", "ticket.annotated"]
+    assert "Anita" not in json.dumps(decision)
+    assert platform.get("/audit/verify").json()["ok"] is True
     stored = json.dumps(result)
     assert "Anita" not in stored and "9840012345" not in stored  # no raw PII on the platform side
     assert result["pii_entities"] == {"PERSON": 1, "PHONE": 1}
 
     notes = mock.get(f"/api/now/table/incident/{inc['sys_id']}/work_notes", headers={"X-API-Key": KEY}).json()
     assert notes["result"][0]["author"] == "ai:test"
-    assert "vpn_access" in notes["result"][0]["note"] and "no action taken" in notes["result"][0]["note"]
+    note = notes["result"][0]["note"]
+    assert "vpn_access" in note and "Autonomy: A0" in note and "Joseph Mathew" in note and "No action taken" in note
 
 
 def test_our_own_work_note_does_not_loop(wired):
@@ -119,6 +128,7 @@ def test_our_own_work_note_does_not_loop(wired):
     m = platform.get("/metrics").json()
     assert m["events"] == {"processed": 1, "ignored": 1}  # created → processed; our note's update → ignored
     assert sum(m["categories"].values()) == 1
+    assert sum(m["levels"].values()) == 1
 
 
 def test_duplicate_webhooks_are_processed_once(wired):
@@ -139,3 +149,19 @@ def test_rejects_unsigned_webhooks(wired):
     good = platform.post("/webhooks/ticketing", content=updated,
                          headers={"X-Kaveri-Signature": sign(updated, SECRET), "X-Kaveri-Delivery": "d1"})
     assert good.status_code == 202 and good.json()["status"] == "ignored"
+
+
+def test_payroll_ticket_is_never_autonomous_end_to_end(wired):
+    mock, platform = wired()
+    inc = new_incident(mock, short_description="Access to payroll module",
+                       description="need PeopleDesk payroll module access, new HR coordinator", u_vip="true")
+    d = platform.get(f"/decisions/{inc['sys_id']}").json()["decision"]
+    assert d["level"] in ("A0", "A1") and d["owner"] == "fin-hr-apps"
+    assert "vip-requester-assist-only" in json.dumps(d["steps"])
+
+
+def test_policy_version_is_audited_at_startup(wired):
+    _, platform = wired()
+    health = platform.get("/health").json()
+    assert health["policy"] == "2026.11-pilot" and len(health["policy_version"]) == 12
+    assert platform.get("/audit/verify").json()["events"] == 1  # policy.loaded
