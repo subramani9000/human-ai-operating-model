@@ -15,9 +15,11 @@ policy_app = typer.Typer(help="Operating-model policy", no_args_is_help=True)
 db_app = typer.Typer(help="Database", no_args_is_help=True)
 mock_app = typer.Typer(help="Mock client ticketing system", no_args_is_help=True)
 golden_app = typer.Typer(help="Golden evaluation sets", no_args_is_help=True)
+audit_app = typer.Typer(help="Tamper-evident audit log", no_args_is_help=True)
 eval_app = typer.Typer(help="Evaluations", no_args_is_help=True)
 platform_app = typer.Typer(help="Human+AI platform service (our side of the integration)", no_args_is_help=True)
 app.add_typer(golden_app, name="golden")
+app.add_typer(audit_app, name="audit")
 app.add_typer(eval_app, name="eval")
 app.add_typer(platform_app, name="platform")
 app.add_typer(policy_app, name="policy")
@@ -88,6 +90,89 @@ def policy_validate(policy_dir: Path = typer.Option(None, help="Defaults to ./po
     typer.echo(f"  {len(policy.categories)} categories, {len(policy.applications)} applications, "
                f"{len(policy.rules)} rules, {len(policy.owners)} owners")
     typer.echo("  current levels: " + ", ".join(f"{lvl}={levels.get(lvl, 0)}" for lvl in ("A0", "A1", "A2", "A3")))
+
+
+@policy_app.command("simulate")
+def policy_simulate(
+    classifier: str = typer.Option("keyword", help="keyword | claude"),
+    golden: str = typer.Option("golden_v1", help="golden_v1 | hard_v1"),
+    promote: list[str] = typer.Option([], help="What-if promotion, e.g. --promote password_reset=A3 (repeatable)"),
+    write: bool = typer.Option(True, help="Write docs/eval-reports/policy-sim-<classifier>-<golden>.md"),
+):
+    """Simulate the policy on a golden set: level mix, over-autonomy (dangerous) and under-autonomy."""
+    from hao.evals.classification_eval import run_classifier
+    from hao.evals.golden import read_golden
+    from hao.intake.classifiers import make_classifier
+    from hao.policy.schema import load_policy
+    from hao.policy.simulate import render, simulate, with_overrides
+
+    rows = read_golden(GOLDEN_DIR / f"{golden}.jsonl")
+    preds = run_classifier(make_classifier(classifier), rows, workers=1 if classifier == "keyword" else 4)
+    base = load_policy(get_settings().policy_dir)
+    overrides = dict(p.split("=", 1) for p in promote)
+    scenarios = [("current policy", base), ("current policy, rules off", with_overrides(base, no_rules=True))]
+    if overrides:
+        label = ", ".join(f"{k}→{v}" for k, v in overrides.items())
+        scenarios += [(f"promote {label}", with_overrides(base, overrides)),
+                      (f"promote {label}, rules off", with_overrides(base, overrides, no_rules=True))]
+    md = render([simulate(name, pol, rows, preds) for name, pol in scenarios], classifier, golden)
+    typer.echo(md)
+    if write:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        (REPORT_DIR / f"policy-sim-{classifier}-{golden}.md").write_text(md, encoding="utf-8")
+
+
+def _platform_sessions():
+    from hao.db.session import init_db, make_engine, make_session_factory
+
+    s = get_settings()
+    engine = make_engine(s.platform_database_url or s.database_url)
+    init_db(engine, prefix="hao_")
+    return make_session_factory(engine)
+
+
+@audit_app.command("verify")
+def audit_verify(expected_head: str = typer.Option("", help="Last anchored head hash, to detect a rewritten chain")):
+    """Walk the hash chain from genesis. Exit code 1 if anything was edited, deleted, reordered or rewritten."""
+    from hao.audit.log import verify
+
+    r = verify(_platform_sessions(), expected_head or None)
+    if r.ok:
+        typer.secho(f"Audit chain OK: {r.events} events, head {r.head_hash}", fg=typer.colors.GREEN)
+    else:
+        typer.secho(f"Audit chain BROKEN at event {r.broken_at_id}: {r.reason}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
+@audit_app.command("head")
+def audit_head():
+    """Print the current head hash. Ship it outside the database (audit mailbox / WORM storage) daily."""
+    from hao.audit.log import head
+
+    with _platform_sessions()() as session:
+        h = head(session)
+    typer.echo(f"{h.hash} {h.id} {h.ts.isoformat()}" if h else "empty")
+
+
+@audit_app.command("export")
+def audit_export(out: Path = typer.Option(Path("audit-export.jsonl")), incident: str = ""):
+    """Export events (optionally one incident) as JSONL for internal audit."""
+    from sqlalchemy import select
+
+    from hao.audit.log import _ts
+    from hao.db.models import HaoAuditEvent
+
+    with _platform_sessions()() as session, out.open("w", encoding="utf-8") as fh:
+        stmt = select(HaoAuditEvent).order_by(HaoAuditEvent.id)
+        if incident:
+            stmt = stmt.where(HaoAuditEvent.incident_sys_id == incident)
+        n = 0
+        for e in session.scalars(stmt):
+            fh.write(json.dumps({"id": e.id, "ts": _ts(e.ts), "incident": e.incident_sys_id, "actor": e.actor,
+                                 "action": e.action, "payload": e.payload, "policy_version": e.policy_version,
+                                 "decision_id": e.decision_id, "prev_hash": e.prev_hash, "hash": e.hash}) + "\n")
+            n += 1
+    typer.echo(f"Exported {n} events to {out}")
 
 
 @db_app.command("init")

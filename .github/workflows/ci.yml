@@ -30,3 +30,5 @@ jobs:
         run: |
           hao eval classify --classifier keyword --golden golden_v1 --no-write | head -20
           hao eval classify --classifier keyword --golden hard_v1 --no-write | head -20
+      - name: Policy simulation — what would a promotion do?
+        run: hao policy simulate --golden golden_v1 --promote password_reset=A3 --no-write | head -12
