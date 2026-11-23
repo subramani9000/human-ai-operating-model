@@ -21,12 +21,16 @@ Each phase ends with working code, tests, an update to the [FDE journal](fde-jou
 - [x] LLM cost/latency recorded per call and per intake result
 - [ ] **Run the Claude eval on both sets and commit the reports** (needs `ANTHROPIC_API_KEY`)
 
-## ⏳ Phase 3: Policy engine + audit log
-- [ ] Decision function: category level → application cap → rules → clamp; records applied rules
-- [ ] Hash-chained `hao_audit_events` with a `hao audit verify` command that detects tampering
-- [ ] Property-based tests: no input can ever produce A3 on FinCore/PeopleDesk
+## ✅ Phase 3: Policy engine + audit log
+- [x] Decision function: category level → application cap → risk-tier caps → rules → clamp; records every step ([ADR 0006](adr/0006-policy-engine-semantics.md))
+- [x] Tripwire rules on ticket text, independent of the classifier
+- [x] Hash-chained `hao_audit_events` with `hao audit verify / head / export`, fork prevention, external anchoring ([ADR 0007](adr/0007-hash-chained-audit-log.md))
+- [x] Property-based tests: no input can ever produce A3 on FinCore/PeopleDesk, even under the most permissive valid policy
+- [x] Decisions + audit trail wired into intake; `GET /decisions/{sys_id}`, `GET /audit/verify`
+- [x] `hao policy simulate`: over/under-autonomy vs intended, rule ablation, what-if promotions
+- [ ] Re-run the simulation with the Claude classifier (needs `ANTHROPIC_API_KEY`)
 
-## Phase 4: Agent lanes
+## ⏳ Phase 4: Agent lanes
 - [ ] LangGraph workflow with human-in-the-loop interrupts for A2
 - [ ] A3 tools against the mock API (reset, unlock, resolve with close notes, reassign)
 - [ ] A1 handoff packet: summary, similar resolved tickets (pgvector), checks done, suggested next step

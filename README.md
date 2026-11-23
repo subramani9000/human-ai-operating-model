@@ -42,8 +42,8 @@ The operating model is **code**: [`policy/autonomy.yaml`](policy/autonomy.yaml) 
 |---|---|---|
 | **1. Discovery and foundations** | Engagement docs, synthetic messy dataset, mock ServiceNow-style API, data model, validated policy | ✅ Done |
 | **2. Intake** | Ticketing adapter, idempotent webhook receiver, PII redaction, keyword + Claude classifiers, golden-set evals | ✅ Done |
-| 3. Policy engine + audit | Autonomy decisions, hash-chained tamper-evident audit log | ⏳ Next |
-| 4. Agent lanes | LangGraph workflows for A3/A2/A1, handoff packets, review console | |
+| **3. Policy engine + audit** | Monotone autonomy decisions with explanations, tripwires, property tests, hash-chained audit log, policy simulation | ✅ Done |
+| 4. Agent lanes | LangGraph workflows for A3/A2/A1, handoff packets, review console | ⏳ Next |
 | 5. Learning loop | Feedback capture, autonomy controller, leadership dashboard | |
 | 6. Hardening | Docker, CI eval gates, Langfuse tracing, runbook, pilot readout | |
 
@@ -61,9 +61,11 @@ pip install -e ".[dev]"
 hao policy validate      # check the operating-model policy
 hao generate             # 5,000 synthetic tickets + ground-truth labels (seed 42)
 hao profile              # data-quality profile of the dataset
-pytest -q                # 71 tests
+pytest -q                # 115 tests (incl. property-based safety invariants)
 hao eval redaction       # PII leakage report
 hao eval classify --golden hard_v1   # keyword baseline on hand-written tickets
+hao policy simulate --promote password_reset=A3   # what would a promotion do?
+hao audit verify         # walk the tamper-evident audit chain
 ```
 
 ### Run the end-to-end flow
@@ -80,9 +82,13 @@ curl -X POST localhost:8001/api/now/table/incident -H 'X-API-Key: kaveri-dev-key
 Within a second the ticket gets a work note written back by the platform:
 
 ```
-[AI triage · keyword-v1] category: payroll_access · application: PeopleDesk · confidence 0.62.
-Suggestion only, no action taken (autonomy routing arrives in Phase 3).
+[AI triage · keyword-v1] category: password_reset · application: SSO · confidence 0.95
+Autonomy: A2 (AI drafts, human approves). category default.
+Accountable owner: Priya Nair · suggested group: SD-L1 · policy 2026.11-pilot (c17c371b2e93)
+No action taken yet: agent lanes arrive in Phase 4.
 ```
+
+`GET localhost:8002/decisions/<sys_id>` returns the decision, every policy step that produced it, and its audit trail. Edit any audit row in the database and `hao audit verify` reports exactly which event was changed.
 
 To use Claude instead of keyword rules, set `ANTHROPIC_API_KEY` in `.env` and run `hao platform serve --classifier claude`.
 
@@ -144,7 +150,14 @@ Tickets like *"WMS-Pro open panna 'Scanner sync failed: code WMS-4021' nu error 
 
 Synthetic data flatters whoever wrote the generator, so every classifier is measured on both sets. The headline metric is **risk-downgrade errors** (for example, a payroll ticket read as a password reset), because those are the errors that would route high-risk work to a low-risk autonomy lane. See [eval reports](docs/eval-reports/).
 
-**The policy can't be configured into something unsafe.** Validation rejects a payroll category set to A3, a category without a named owner, or controller thresholds that would make autonomy flap. CI runs `hao policy validate` on every PR.
+**The policy can't be configured into something unsafe.** Validation rejects a payroll category set to A3, a category without a named owner, or controller thresholds that would make autonomy flap. Every engine step can only *lower* autonomy, and property-based tests check the safety invariants against the **most permissive policy the validator allows** ([ADR 0006](docs/adr/0006-policy-engine-semantics.md)). `hao policy simulate` shows what a policy change would do before anyone approves it:
+
+| Keyword classifier on `golden_v1` | Over-autonomy (dangerous) | Under-autonomy (lost automation) |
+|---|---|---|
+| Rules off | 8 | 1 |
+| Current policy (confidence rules + tripwires) | **1** | 129 |
+
+**Every AI decision is auditable.** Events are hash-chained and the head hash is anchored outside the database. Edits, deletions and full rewrites are all detected ([ADR 0007](docs/adr/0007-hash-chained-audit-log.md)).
 
 ---
 
@@ -160,7 +173,8 @@ src/hao/
   platform/               Webhook receiver + intake pipeline (verify → dedupe → redact → classify → note)
   intake/                 PII redaction, taxonomy, keyword + Claude classifiers
   evals/                  Golden sets, redaction eval, classification eval
-  policy/                 Policy schema + cross-validation
+  policy/                 Policy schema + validation, decision engine, simulation
+  audit/                  Hash-chained, tamper-evident audit log
   db/                     Data model (client_* = simulated client, hao_* = platform)
   cli.py                  `hao` command
 data/synthetic/           Committed 200-ticket sample (full set via `hao generate`)

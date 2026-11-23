@@ -50,4 +50,27 @@ A running log of what this engagement teaches about forward-deployed engineering
 ---
 
 ## Phase 3: Policy engine + audit log
+
+**What was built**
+- Policy engine with a fixed, monotone evaluation order and a per-step explanation trail
+- Tripwire rules on the ticket text that don't depend on the classifier
+- Property-based tests (Hypothesis) on the real policy and on the most permissive policy the validator allows
+- Hash-chained audit log: fork prevention, `verify`, `head` anchoring, `export`
+- Decisions wired into intake: every ticket gets a level, an accountable owner and a work note explaining why
+- `hao policy simulate`: production-vs-intended comparison, rule ablation, and what-if promotions
+
+**FDE lessons**
+1. **Make the policy readable by the people who'll be blamed for it.** "Every step can only lower the level" is one sentence an auditor can check against the YAML. Clever rule interactions would have been more flexible and impossible to sign off.
+2. **Test invariants against the worst *allowed* configuration, not today's.** Today no category is at A3, so "payroll never reaches A3" is trivially true. Running the property tests against a policy with everything promoted to its ceiling is what makes the guarantee survive Phase 5.
+3. **Safety rules have a price, and the classifier's calibration sets it.** The low-confidence rule cut over-autonomy from 8 to 1, but also sent 43% of tickets to a lower level than intended, because the keyword classifier's confidence means little. That turns "is the LLM worth it?" into a concrete question: does better calibration buy back that 43%?
+4. **Confident errors need a different defence.** Confidence rules can't catch a model that is wrong *and* sure. Deterministic tripwires on the raw text, independent of the classifier, catch those cases. Defence in depth, not one clever check.
+5. **Protect the held-out set from yourself.** The tripwires missed two phishing tickets in `hard_v1`. Adding those phrasings would have fixed the number and destroyed the test. The miss is recorded as an open risk in ADR 0006 instead.
+6. **Tamper-evident is not tamper-proof. Say which one you built.** A hash chain only proves integrity if its head is anchored somewhere the attacker can't reach. Being precise about this in the ADR builds more trust with audit than overclaiming.
+
+**What I'd do differently**
+- _(add your own reflections here)_
+
+---
+
+## Phase 4: Agent lanes
 _(to be written)_

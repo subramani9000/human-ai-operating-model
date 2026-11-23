@@ -30,13 +30,14 @@ flowchart TD
 | **A1** | AI assists | Builds the handoff packet: summary, similar tickets, checks done, suggestion | Leads the resolution | App errors, VPN edge cases |
 | **A0** | Human only | Logs only | Everything | Security incidents, major outages |
 
-### How a level is chosen (Phase 3)
+### How a level is chosen (`src/hao/policy/engine.py`)
 
-1. Start from the category's `current_level` in `policy/autonomy.yaml`.
+1. Start from the category's `current_level` in `policy/autonomy.yaml` (unknown category → A0, owned by the L1 lead).
 2. Apply the **application cap**: a ticket touching `FinCore` or `PeopleDesk` can never exceed A2, whatever its category.
-3. Apply **rules** in order, e.g. classifier confidence < 0.80 drops one level; a VIP requester caps at A1; P1 priority caps at A0.
-4. Clamp to `max_level`.
-5. Record the decision with `policy_version`, the applied rules and inputs. **No decision without a policy reference.**
+3. Apply the **risk-tier caps** for both the category and the application.
+4. Apply **rules** in order, e.g. confidence < 0.80 drops one level; a VIP requester caps at A1; P1 caps at A0; **tripwires** on security or outage language in the text cap at A0.
+5. Clamp to `max_level`. **No step can raise the level**, so every cap in the file always holds.
+6. Record the decision with every step, the policy content hash and its label. **No decision without a policy reference.**
 
 ### How autonomy changes (Phase 5)
 
@@ -52,7 +53,7 @@ flowchart TD
 | Data model + policy schema/validation | **1** ✅ | SQLAlchemy models; Pydantic-validated YAML |
 | Ticketing adapter + webhook receiver (idempotent, loop-safe) | **2** ✅ | `src/hao/adapters`, `src/hao/platform` |
 | Intake: context-aware redaction + classifier | **2** ✅ | Keyword baseline + Claude Haiku 5.5; golden-set evals ([ADR 0004](adr/0004-context-aware-redaction.md), [0005](adr/0005-classifier-evaluation.md)) |
-| Policy engine + hash-chained audit log | 3 | |
+| Policy engine + hash-chained audit log | **3** ✅ | Monotone steps, tripwires, property tests ([ADR 0006](adr/0006-policy-engine-semantics.md), [0007](adr/0007-hash-chained-audit-log.md)) |
 | Agent lanes (LangGraph), review console | 4 | Claude Sonnet 5.5 for resolution and handoffs |
 | Feedback loop, autonomy controller, dashboard | 5 | |
 | Docker, CI eval gates, Langfuse, runbook, pilot readout | 6 | |
