@@ -90,6 +90,40 @@ class ClientWebhookDelivery(Base):
     delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ClientKbArticle(Base):
+    __tablename__ = "client_kb_articles"
+
+    number: Mapped[str] = mapped_column(String(16), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str] = mapped_column(Text)
+
+
+class ClientIdentityEvent(Base):
+    """Identity actions performed by the client's IAM system (password resets, unlocks)."""
+
+    __tablename__ = "client_identity_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(40))  # reset_password | unlock_account
+    user_email: Mapped[str] = mapped_column(String(200))
+    application: Mapped[str] = mapped_column(String(80))
+    actor: Mapped[str] = mapped_column(String(120))
+    incident_sys_id: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ClientSoftwareRequest(Base):
+    __tablename__ = "client_software_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    package: Mapped[str] = mapped_column(String(120))
+    user_email: Mapped[str] = mapped_column(String(200))
+    actor: Mapped[str] = mapped_column(String(120))
+    incident_sys_id: Mapped[str] = mapped_column(String(32), default="")
+    status: Mapped[str] = mapped_column(String(20), default="submitted")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 # ---------------------------------------------------------------- Human+AI operating model platform
 
 
@@ -133,6 +167,31 @@ class HaoIntakeResult(Base):
     work_note_status: Mapped[str] = mapped_column(String(20), default="pending")  # written | failed
     work_note_error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class HaoWorkItem(Base):
+    """One lane execution per decision. A small, durable state machine (ADR 0008)."""
+
+    __tablename__ = "hao_work_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    incident_sys_id: Mapped[str] = mapped_column(String(32), index=True)
+    number: Mapped[str] = mapped_column(String(16), default="")
+    decision_id: Mapped[int] = mapped_column(ForeignKey("hao_decisions.id"))
+    level: Mapped[str] = mapped_column(String(2))
+    lane: Mapped[str] = mapped_column(String(20))  # human | assist | draft | auto | qa
+    # human_only | handed_off | awaiting_approval | approved | rejected | executed | failed | qa_pending | qa_done
+    state: Mapped[str] = mapped_column(String(30), index=True)
+    category: Mapped[str] = mapped_column(String(80), default="")
+    plan: Mapped[list] = mapped_column(JSON, default=list)  # [{"tool": ..., "args": {...}}]
+    draft: Mapped[dict] = mapped_column(JSON, default=dict)  # reply, close_notes, handoff_summary, next_step
+    context: Mapped[dict] = mapped_column(JSON, default=dict)  # kb matches, similar tickets, checks done
+    results: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str] = mapped_column(Text, default="")
+    reviewer: Mapped[str] = mapped_column(String(200), default="")
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # qa item → the auto item it samples
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class HaoDecision(Base):
@@ -184,6 +243,9 @@ class HaoFeedback(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     decision_id: Mapped[int] = mapped_column(ForeignKey("hao_decisions.id"), index=True)
+    work_item_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    category: Mapped[str] = mapped_column(String(80), default="")
+    level: Mapped[str] = mapped_column(String(2), default="")
     reviewer: Mapped[str] = mapped_column(String(200))
     verdict: Mapped[str] = mapped_column(String(20))  # approved | edited | rejected | rerouted
     reason_code: Mapped[str] = mapped_column(String(60), default="")

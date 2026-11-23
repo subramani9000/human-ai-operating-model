@@ -26,12 +26,16 @@ from sqlalchemy.orm import Session
 
 from hao.config import REPO_ROOT, Settings, get_settings
 from hao.db.models import (
+    ClientIdentityEvent,
     ClientIncident,
+    ClientKbArticle,
+    ClientSoftwareRequest,
     ClientWebhookDelivery,
     ClientWebhookSubscription,
     ClientWorkNote,
 )
 from hao.db.session import init_db, make_engine, make_session_factory
+from hao.mock_ticketing.kb import KB_ARTICLES
 from hao.mock_ticketing.serialize import (
     INCIDENT_FIELDS,
     STATES,
@@ -71,6 +75,10 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
     init_db(engine, prefix="client_")
     session_factory = make_session_factory(engine)
     chaos_rng = rng or random.Random()
+    with session_factory() as session:  # the client's existing knowledge base
+        if not session.scalar(select(func.count()).select_from(ClientKbArticle)):
+            session.add_all(ClientKbArticle(number=n, title=t, text=x) for n, t, x in KB_ARTICLES)
+            session.commit()
 
     app = FastAPI(
         title="Kaveri ITSM: mock ticketing API",
@@ -174,6 +182,9 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
             inc.resolved_at = None
         if body.get("work_notes"):
             session.add(ClientWorkNote(incident_sys_id=sys_id, author=x_actor, note=str(body["work_notes"])))
+        if body.get("comments"):  # customer-visible, unlike work notes
+            session.add(ClientWorkNote(incident_sys_id=sys_id, kind="comment", author=x_actor,
+                                       note=str(body["comments"])))
         inc.sys_updated_on = datetime.now(UTC)
         session.commit()
         emit(tasks, "incident.updated", inc)
@@ -186,6 +197,56 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
                                 .order_by(ClientWorkNote.id)).all()
         return {"result": [{"kind": n.kind, "author": n.author, "note": n.note,
                             "created_at": n.created_at.strftime("%Y-%m-%d %H:%M:%S")} for n in notes]}
+
+    # ------------------------------------------------------------------ knowledge base
+
+    @app.get("/api/now/table/kb_knowledge", dependencies=[Depends(auth)], tags=["knowledge"])
+    def list_kb(session: DB):
+        rows = session.scalars(select(ClientKbArticle).order_by(ClientKbArticle.number)).all()
+        return {"result": [{"number": r.number, "short_description": r.title, "text": r.text} for r in rows]}
+
+    # ------------------------------------------------------------------ identity + software (client IAM)
+
+    privileged_apps = {"PeopleDesk", "FinCore"}
+
+    def identity_action(action: str, session: Session, body: dict, actor: str):
+        user, application = str(body.get("user_email", "")), str(body.get("application", ""))
+        if not user or not application:
+            raise APIError(400, "Invalid request", "user_email and application are required")
+        if application in privileged_apps and not actor.startswith("user:"):
+            # The client's own IAM control, independent of our policy engine: defence in depth.
+            raise APIError(403, "Policy violation", f"{action} on {application} requires a human actor")
+        session.add(ClientIdentityEvent(action=action, user_email=user, application=application, actor=actor,
+                                        incident_sys_id=str(body.get("incident_sys_id", ""))))
+        session.commit()
+        # The credential goes to the user out of band; it is never returned to the caller (or an AI).
+        return {"result": {"status": "done", "action": action, "delivery": "sms_to_registered_mobile"}}
+
+    @app.post("/api/x_kaveri/identity/reset_password", dependencies=[Depends(auth)], tags=["identity"])
+    def reset_password(session: DB, body: Annotated[dict[str, Any], Body()], x_actor: Annotated[str, Header()] = "api"):
+        return identity_action("reset_password", session, body, x_actor)
+
+    @app.post("/api/x_kaveri/identity/unlock_account", dependencies=[Depends(auth)], tags=["identity"])
+    def unlock_account(session: DB, body: Annotated[dict[str, Any], Body()], x_actor: Annotated[str, Header()] = "api"):
+        return identity_action("unlock_account", session, body, x_actor)
+
+    @app.get("/api/x_kaveri/identity/events", dependencies=[Depends(auth)], tags=["identity"])
+    def identity_events(session: DB):
+        rows = session.scalars(select(ClientIdentityEvent).order_by(ClientIdentityEvent.id)).all()
+        return {"result": [{"action": r.action, "user_email": r.user_email, "application": r.application,
+                            "actor": r.actor, "incident": r.incident_sys_id} for r in rows]}
+
+    @app.post("/api/x_kaveri/software/requests", status_code=201, dependencies=[Depends(auth)], tags=["software"])
+    def software_request(session: DB, body: Annotated[dict[str, Any], Body()],
+                         x_actor: Annotated[str, Header()] = "api"):
+        package, user = str(body.get("package", "")), str(body.get("user_email", ""))
+        if not package or not user:
+            raise APIError(400, "Invalid request", "package and user_email are required")
+        req = ClientSoftwareRequest(package=package, user_email=user, actor=x_actor,
+                                    incident_sys_id=str(body.get("incident_sys_id", "")))
+        session.add(req)
+        session.commit()
+        return {"result": {"id": str(req.id), "status": req.status}}
 
     # ------------------------------------------------------------------ webhooks
 
@@ -252,7 +313,8 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
 
     @app.post("/admin/reset", dependencies=[Depends(auth)], tags=["admin"])
     def reset(session: DB):
-        for model in (ClientWorkNote, ClientWebhookDelivery, ClientWebhookSubscription, ClientIncident):
+        for model in (ClientWorkNote, ClientWebhookDelivery, ClientWebhookSubscription, ClientIdentityEvent,
+                      ClientSoftwareRequest, ClientIncident):
             session.execute(delete(model))
         session.commit()
         return {"result": {"reset": "true"}}
