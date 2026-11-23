@@ -7,6 +7,7 @@ on payroll, or a category with no accountable owner, fails CI (ADR 0001).
 from __future__ import annotations
 
 import hashlib
+import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -59,9 +60,15 @@ class RuleCondition(BaseModel):
     priority_in: list[str] | None = None
     requester_is_vip: bool | None = None
     reopen_count_at_least: int | None = Field(default=None, ge=0)
+    text_matches: str | None = None  # case-insensitive regex over the (redacted) ticket text
 
     @model_validator(mode="after")
     def at_least_one(self) -> RuleCondition:
+        if self.text_matches is not None:
+            try:
+                re.compile(self.text_matches)
+            except re.error as exc:
+                raise ValueError(f"text_matches is not a valid regex: {exc}") from exc
         if not any(v is not None for v in self.model_dump().values()):
             raise ValueError("rule condition must set at least one field")
         return self
@@ -98,11 +105,18 @@ class Controller(BaseModel):
         return self
 
 
+class UnknownCategory(BaseModel):
+    owner: str
+    level: Level
+    assignment_group: str
+
+
 class Policy(BaseModel):
     version_label: str
     risk_tiers: dict[str, RiskTier]
     applications: dict[str, Application]
     categories: dict[str, Category]
+    unknown_category: UnknownCategory
     rules: list[Rule]
     controller: Controller
     owners: dict[str, Owner]
@@ -127,6 +141,10 @@ class Policy(BaseModel):
                 errors.append(f"category '{name}': max_level {cat.max_level} exceeds tier cap {tier.max_level}")
             if cat.max_level < cat.current_level:
                 errors.append(f"category '{name}': current_level {cat.current_level} above max_level {cat.max_level}")
+        if self.unknown_category.owner not in self.owners:
+            errors.append(f"unknown_category: owner '{self.unknown_category.owner}' not defined in ownership.yaml")
+        if self.unknown_category.level != Level.A0:
+            errors.append("unknown_category: level must be A0 (unclassifiable work goes to a human)")
         ids = [r.id for r in self.rules]
         if len(ids) != len(set(ids)):
             errors.append("rule ids must be unique")

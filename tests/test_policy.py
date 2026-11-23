@@ -83,3 +83,16 @@ def test_version_changes_with_content(policy_copy):
 def test_level_ordering():
     assert Level.A0 < Level.A1 < Level.A2 < Level.A3
     assert Level.A2.rank == 2
+
+
+def test_rejects_invalid_tripwire_regex(policy_copy):
+    _edit(policy_copy, lambda d: d["rules"].append({"id": "bad", "when": {"text_matches": "(unclosed"},
+                                                     "effect": {"cap": "A0"}}))
+    with pytest.raises(ValueError, match="valid regex"):
+        load_policy(policy_copy)
+
+
+def test_unknown_category_must_be_human_only(policy_copy):
+    _edit(policy_copy, lambda d: d["unknown_category"].update(level="A2"))
+    with pytest.raises(ValueError, match="must be A0"):
+        load_policy(policy_copy)

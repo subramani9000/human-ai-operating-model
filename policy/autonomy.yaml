@@ -48,7 +48,13 @@ categories:
   security_phishing:    { owner: security,     risk_tier: critical, current_level: A0, max_level: A0, assignment_group: "SEC-SOC" }
   network_outage:       { owner: network-lead, risk_tier: critical, current_level: A0, max_level: A0, assignment_group: "NET-Major-Incident" }
 
-# Applied in order after the category level and application cap (engine lands in Phase 3).
+# Tickets the classifier can't place (or any category not listed above) go to a human.
+unknown_category:
+  owner: l1-lead
+  level: A0
+  assignment_group: "SD-L1"
+
+# Applied in order after the category level and the application / risk-tier caps (src/hao/policy/engine.py).
 rules:
   - id: low-confidence-downgrade
     when: { confidence_below: 0.80 }
@@ -65,6 +71,14 @@ rules:
   - id: reopened-ticket-human-led
     when: { reopen_count_at_least: 1 }
     effect: { cap: A1 }
+  # Tripwires: deterministic, independent of the classifier. They catch confident misclassifications
+  # (e.g. a phishing report read as a password reset at 0.95). Over-triggering only costs automation.
+  - id: security-tripwire
+    when: { text_matches: "phish|suspicious|scam|clicked|gift card|asking (for )?(my )?(password|credentials)|verify (my|your) .*(details|account)|malware|virus|\\.zip\\b" }
+    effect: { cap: A0 }
+  - id: outage-tripwire
+    when: { text_matches: "\\boutage\\b|site (is )?(down|offline)|entire site|whole site|all systems|nothing works|(everyone|all users|whole team) (is |are )?(down|affected)" }
+    effect: { cap: A0 }
 
 # Autonomy controller thresholds (Phase 5).
 controller:
