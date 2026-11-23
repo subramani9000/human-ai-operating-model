@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
     classifier_model: str = "claude-haiku-5-5"
+    drafter_model: str = "claude-sonnet-5-5"
+    public_console_url: str = "http://localhost:8002/console"
     llm_input_price_per_mtok: float | None = None  # USD per million tokens; set to enable cost tracking
     llm_output_price_per_mtok: float | None = None
     usd_to_inr: float = 84.0

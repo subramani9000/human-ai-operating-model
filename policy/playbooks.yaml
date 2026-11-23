@@ -1,0 +1,59 @@
+# Agent playbooks: which actions an agent may take, per category (ADR 0008).
+#
+# The LLM writes words (replies, close notes, handoff summaries). This file, reviewed by the category
+# owner, decides the actions. A category with no playbook can never act on its own, whatever its level.
+#
+# Tools only run when the decision level allows it: A3 → the agent executes directly;
+# A2 → the plan waits for a human approval in the review console and runs under the approver's name.
+
+routing_min_level: A1        # AI may move a ticket to the policy's assignment group at A1 and above
+qa_sample_rate: 0.2          # share of A3 executions sampled into the QA review queue
+reason_codes:                # what a reviewer must pick when editing or rejecting a draft
+  - wrong_category
+  - wrong_action
+  - unsafe
+  - incorrect_information
+  - tone
+  - duplicate
+  - other
+
+software_catalog: ["Power BI Desktop", "Python 3.12", "Zoom", "Notepad++", "Tableau Reader", "Postman", "7-Zip",
+                   "Visual Studio Code", "Git"]
+
+playbooks:
+  password_reset:
+    actions:
+      - { tool: identity.reset_password }
+      - { tool: customer.reply }
+      - { tool: incident.resolve, args: { close_code: "Solved (Permanently)" } }
+    reply: >-
+      Hi {caller}, we've reset your {application} password. A temporary password has been sent by SMS to
+      your registered mobile number and is valid for 24 hours; you'll be asked to set a new one when you
+      log in. See {kb} if you need help.
+    close_notes: "Password reset via IAM; temporary password delivered by SMS. {kb}"
+
+  account_unlock:
+    actions:
+      - { tool: identity.unlock_account }
+      - { tool: customer.reply }
+      - { tool: incident.resolve, args: { close_code: "Solved (Permanently)" } }
+    reply: >-
+      Hi {caller}, your {application} account is unlocked. If it locks again, an old password may be saved
+      on your phone or a mapped drive. {kb} explains how to check.
+    close_notes: "Account unlocked via IAM. {kb}"
+
+  how_to_question:
+    actions:
+      - { tool: customer.reply }
+      - { tool: incident.resolve, args: { close_code: "Solved (Work Around)" } }
+    reply: "Hi {caller}, this should help: {kb_title} ({kb}). {kb_text} Reply here if anything is unclear."
+    close_notes: "Answered with {kb}."
+
+  software_install:
+    actions:
+      - { tool: software.request_install }
+      - { tool: customer.reply }
+    reply: >-
+      Hi {caller}, we've raised a software request for {package}. You'll get an update here once it's
+      installed. Catalogue software is usually installed within one working day.
+    close_notes: "Software request raised for {package}."
