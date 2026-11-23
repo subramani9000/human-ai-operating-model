@@ -85,10 +85,22 @@ def policy_validate(policy_dir: Path = typer.Option(None, help="Defaults to ./po
     except Exception as exc:  # noqa: BLE001
         typer.secho(f"Policy INVALID:\n{exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc
+    from hao.agents.playbooks import load_playbooks
+
+    try:
+        playbooks = load_playbooks(policy_dir or get_settings().policy_dir)
+    except Exception as exc:  # noqa: BLE001
+        typer.secho(f"Playbooks INVALID:\n{exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    problems = playbooks.check_against(policy)
+    if problems:
+        typer.secho("Playbooks do not match policy:\n  " + "\n  ".join(problems), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
     levels = Counter(c.current_level.value for c in policy.categories.values())
     typer.secho(f"Policy OK — {policy.version_label} (version {policy.version})", fg=typer.colors.GREEN)
     typer.echo(f"  {len(policy.categories)} categories, {len(policy.applications)} applications, "
                f"{len(policy.rules)} rules, {len(policy.owners)} owners")
+    typer.echo(f"  {len(playbooks.playbooks)} playbooks: {', '.join(playbooks.playbooks)}")
     typer.echo("  current levels: " + ", ".join(f"{lvl}={levels.get(lvl, 0)}" for lvl in ("A0", "A1", "A2", "A3")))
 
 
@@ -268,13 +280,14 @@ def eval_classify(
 
 
 @platform_app.command("serve")
-def platform_serve(host: str = "0.0.0.0", port: int = 8002, classifier: str = "keyword"):
-    """Run the platform webhook receiver (intake: verify → dedupe → redact → classify → work note)."""
+def platform_serve(host: str = "0.0.0.0", port: int = 8002, classifier: str = "keyword", drafter: str = "template"):
+    """Run the platform: webhooks → intake → policy decision → agent lane. Review console at /console."""
     import os
 
     import uvicorn
 
     os.environ["HAO_CLASSIFIER"] = classifier
+    os.environ["HAO_DRAFTER"] = drafter
     uvicorn.run("hao.platform.app:create_app_from_env", factory=True, host=host, port=port)
 
 
