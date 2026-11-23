@@ -1,0 +1,31 @@
+# Named human owners. Every category in autonomy.yaml must reference one of these.
+# Fictional people at Kaveri Logistics.
+owners:
+  l1-lead:
+    name: Priya Nair
+    email: priya.nair@kaveri.example
+    role: L1 Service Desk Lead
+  l2-apps:
+    name: Vikram Shetty
+    email: vikram.shetty@kaveri.example
+    role: L2 Manager, Application Support
+  network-lead:
+    name: Joseph Mathew
+    email: joseph.mathew@kaveri.example
+    role: Network and Connectivity Lead
+  euc-lead:
+    name: Divya Krishnan
+    email: divya.krishnan@kaveri.example
+    role: End-User Computing Lead
+  fin-hr-apps:
+    name: Arjun Rao
+    email: arjun.rao@kaveri.example
+    role: FinCore and PeopleDesk Application Owner
+  security:
+    name: Farah Khan
+    email: farah.khan@kaveri.example
+    role: CISO Office
+  it-ops-head:
+    name: Ramesh Iyer
+    email: ramesh.iyer@kaveri.example
+    role: Head of IT Operations (sponsor)

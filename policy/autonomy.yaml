@@ -1,0 +1,75 @@
+# Kaveri Logistics: Human+AI operating model policy.
+#
+# Levels:  A0 human only · A1 AI assists, human leads · A2 AI drafts, human approves · A3 AI acts
+# Changes to this file are made by pull request and approved by the category owner (ADR 0001).
+# Validate with:  hao policy validate
+
+version_label: "2026.11-pilot"
+
+# Risk tiers cap the maximum autonomy any category in that tier can ever reach.
+risk_tiers:
+  low:      { max_level: A3 }
+  medium:   { max_level: A2 }
+  high:     { max_level: A2 }
+  critical: { max_level: A0 }
+
+# Applications can impose a cap regardless of category ("category isn't risk").
+applications:
+  FinCore:      { risk_tier: high,     max_level: A2 }   # finance / expenses
+  PeopleDesk:   { risk_tier: high,     max_level: A2 }   # HRMS / payroll
+  KLMS:         { risk_tier: medium,   max_level: A2 }   # core logistics management
+  FleetTrack:   { risk_tier: medium,   max_level: A2 }
+  WMS-Pro:      { risk_tier: medium,   max_level: A2 }
+  RouteOptima:  { risk_tier: medium,   max_level: A2 }
+  CustomsLink:  { risk_tier: medium,   max_level: A2 }
+  Outlook:      { risk_tier: low,      max_level: A3 }
+  Teams:        { risk_tier: low,      max_level: A3 }
+  GlobalVPN:    { risk_tier: low,      max_level: A3 }
+  SSO:          { risk_tier: low,      max_level: A3 }
+  Endpoint:     { risk_tier: low,      max_level: A3 }
+  PrintHub:     { risk_tier: low,      max_level: A3 }
+  CorpNetwork:  { risk_tier: critical, max_level: A0 }
+
+# Pilot start state. current_level is what the system uses today; max_level is the ceiling.
+categories:
+  password_reset:       { owner: l1-lead,      risk_tier: low,      current_level: A2, max_level: A3, assignment_group: "SD-L1" }
+  account_unlock:       { owner: l1-lead,      risk_tier: low,      current_level: A2, max_level: A3, assignment_group: "SD-L1" }
+  how_to_question:      { owner: l1-lead,      risk_tier: low,      current_level: A2, max_level: A3, assignment_group: "SD-L1" }
+  vpn_access:           { owner: network-lead, risk_tier: low,      current_level: A1, max_level: A3, assignment_group: "NET-Connectivity" }
+  email_issue:          { owner: euc-lead,     risk_tier: low,      current_level: A1, max_level: A3, assignment_group: "EUC-Messaging" }
+  software_install:     { owner: euc-lead,     risk_tier: medium,   current_level: A1, max_level: A2, assignment_group: "EUC-Desktop" }
+  printer_issue:        { owner: euc-lead,     risk_tier: low,      current_level: A1, max_level: A3, assignment_group: "EUC-Desktop" }
+  laptop_hardware:      { owner: euc-lead,     risk_tier: medium,   current_level: A1, max_level: A2, assignment_group: "EUC-Hardware" }
+  app_access_request:   { owner: l2-apps,      risk_tier: medium,   current_level: A1, max_level: A2, assignment_group: "APP-Access" }
+  app_error:            { owner: l2-apps,      risk_tier: medium,   current_level: A1, max_level: A2, assignment_group: "APP-Support-L2" }
+  payroll_access:       { owner: fin-hr-apps,  risk_tier: high,     current_level: A1, max_level: A2, assignment_group: "HR-Systems" }
+  payroll_discrepancy:  { owner: fin-hr-apps,  risk_tier: high,     current_level: A1, max_level: A2, assignment_group: "HR-Systems" }
+  expense_claim_issue:  { owner: fin-hr-apps,  risk_tier: high,     current_level: A1, max_level: A2, assignment_group: "FIN-Systems" }
+  security_phishing:    { owner: security,     risk_tier: critical, current_level: A0, max_level: A0, assignment_group: "SEC-SOC" }
+  network_outage:       { owner: network-lead, risk_tier: critical, current_level: A0, max_level: A0, assignment_group: "NET-Major-Incident" }
+
+# Applied in order after the category level and application cap (engine lands in Phase 3).
+rules:
+  - id: low-confidence-downgrade
+    when: { confidence_below: 0.80 }
+    effect: { downgrade: 1 }
+  - id: very-low-confidence-human
+    when: { confidence_below: 0.50 }
+    effect: { cap: A0 }
+  - id: p1-human-only
+    when: { priority_in: ["1"] }
+    effect: { cap: A0 }
+  - id: vip-requester-assist-only
+    when: { requester_is_vip: true }
+    effect: { cap: A1 }
+  - id: reopened-ticket-human-led
+    when: { reopen_count_at_least: 1 }
+    effect: { cap: A1 }
+
+# Autonomy controller thresholds (Phase 5).
+controller:
+  window_days: 14
+  min_samples: 50
+  promote_precision: 0.95     # proposes promotion; owner approves via PR
+  demote_precision: 0.90      # automatic, immediate
+  reopen_window_hours: 72     # open question in discovery; 72h agreed for pilot
