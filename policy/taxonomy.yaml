@@ -1,0 +1,50 @@
+# Ticket taxonomy, agreed with the L1 lead and L2 manager during discovery (D2, D3).
+# Descriptions are written for humans *and* go into the classifier prompt verbatim, so keep them precise.
+# Changing a description changes classifier behaviour: re-run `hao eval classify` in the PR.
+
+categories:
+  password_reset:
+    description: User forgot or has an expired password and needs it reset. Not a locked account.
+    default_application: SSO
+  account_unlock:
+    description: Account is locked after failed login attempts and needs unlocking. Password itself is known.
+    default_application: SSO
+  how_to_question:
+    description: User asks how to do something in an application. Nothing is broken.
+    default_application: ""
+  vpn_access:
+    description: VPN will not connect, keeps dropping, or a user needs VPN access for remote work.
+    default_application: GlobalVPN
+  email_issue:
+    description: Outlook / mailbox problems such as not syncing, mailbox full, mails stuck in outbox.
+    default_application: Outlook
+  software_install:
+    description: Request to install a software package on a laptop or desktop.
+    default_application: Endpoint
+  printer_issue:
+    description: Office printer offline, jobs stuck, not printing.
+    default_application: PrintHub
+  laptop_hardware:
+    description: Physical laptop problems such as battery, boot failure, keyboard, slowness or hanging.
+    default_application: Endpoint
+  app_access_request:
+    description: New access or a new role in a business application (KLMS, WMS-Pro, FleetTrack, CustomsLink, RouteOptima). Not payroll.
+    default_application: ""
+  app_error:
+    description: A business application shows an error, is down, or a job fails. Operational impact likely.
+    default_application: ""
+  payroll_access:
+    description: Request for access to the PeopleDesk payroll module. High risk.
+    default_application: PeopleDesk
+  payroll_discrepancy:
+    description: Salary, payslip or overtime amount is wrong. High risk, HR-owned.
+    default_application: PeopleDesk
+  expense_claim_issue:
+    description: Expense or travel claim problems in FinCore, e.g. stuck in approval. High risk, finance-owned.
+    default_application: FinCore
+  security_phishing:
+    description: Suspicious email, phishing, or a user clicked a suspicious link or shared credentials. Critical.
+    default_application: Outlook
+  network_outage:
+    description: Site-wide or multi-user network outage. Critical, major incident.
+    default_application: CorpNetwork
