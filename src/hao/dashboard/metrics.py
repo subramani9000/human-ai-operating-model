@@ -63,6 +63,7 @@ def compute(session_factory: sessionmaker[Session], policy: Policy, value: dict,
                       "status": p.status, "approved_by": p.approved_by}
                      for p in s.scalars(select(HaoAutonomyChange).order_by(HaoAutonomyChange.id))]
         categories = ctl.status(s, policy, as_of)
+        kill_switch = ctl.kill_switch_state(s)
         d_by_id = {d.id: d for d in decisions}
     chain = audit.verify(session_factory)
 
@@ -106,6 +107,7 @@ def compute(session_factory: sessionmaker[Session], policy: Policy, value: dict,
             "ai_resolved": len(auto), "approved_and_resolved": len(approved),
             "handed_off": sum(1 for i in work if i.state == "handed_off"),
             "awaiting_approval": sum(1 for i in work if i.state == "awaiting_approval"),
+            "expired_unreviewed": sum(1 for i in work if i.state == "expired"),
             "rejected": sum(1 for i in work if i.state == "rejected"),
             "failed_fallback": sum(1 for i in work if i.state == "failed"),
             "human_only": sum(1 for i in work if i.state == "human_only"),
@@ -132,7 +134,7 @@ def compute(session_factory: sessionmaker[Session], policy: Policy, value: dict,
             "audit_chain_ok": chain.ok, "audit_events": chain.events,
             "decisions_with_audit_record": pct(sum(1 for d in decisions if d.id in decided_events), n),
             "human_verdicts_captured": captured_rate,
-            "active_demotions": overrides, "proposals": proposals,
+            "active_demotions": overrides, "proposals": proposals, "kill_switch": kill_switch,
         },
         "categories": categories,
         "targets": _targets(n, len(auto), len(executed), reopened_items, executed, decisions, decided_events,

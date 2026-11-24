@@ -45,6 +45,8 @@ POSITIVE = {"approved", "qa_pass"}
 NEGATIVE = {"edited", "rejected", "qa_fail", "reopened"}
 VERIFIED = {"approved", "edited", "rejected", "qa_pass", "qa_fail"}  # a human looked at the item
 ACTOR = "system:autonomy-controller"
+GLOBAL = "*"  # override key for the kill switch: applies to every category
+SPONSOR = "it-ops-head"  # ownership.yaml key of the person who can switch the kill switch back off
 _BY_RANK = {lvl.rank: lvl for lvl in Level}
 
 
@@ -83,8 +85,11 @@ def load_caps(session: Session) -> dict[str, Level]:
 
 
 def effective_level(policy: Policy, caps: dict[str, Level], category: str) -> Level:
-    cat = policy.categories[category]
-    return caps[category] if category in caps and caps[category] < cat.current_level else cat.current_level
+    level = policy.categories[category].current_level
+    for key in (category, GLOBAL):
+        if key in caps and caps[key] < level:
+            level = caps[key]
+    return level
 
 
 def level_changed_at(session: Session) -> dict[str, datetime]:
@@ -214,7 +219,8 @@ def run(session: Session, policy: Policy, as_of: datetime | None = None) -> Cont
                                                       .where(HaoAutonomyChange.status == "proposed"))}
     for cat, ev in out.evidence.items():
         spec = policy.categories.get(cat)
-        if spec is None or cat in caps or cat in open_props or spec.current_level.rank >= spec.max_level.rank:
+        if (spec is None or cat in caps or GLOBAL in caps or cat in open_props
+                or spec.current_level.rank >= spec.max_level.rank):
             continue
         if ev.items >= c.min_samples and ev.precision is not None and ev.precision >= c.promote_precision:
             to = _BY_RANK[spec.current_level.rank + 1]
@@ -299,3 +305,50 @@ def status(session: Session, policy: Policy, as_of: datetime | None = None) -> l
             "proposal": props[cat].id if cat in props else None, "owner": policy.owners[spec.owner].name,
         })
     return rows
+
+
+# ----------------------------------------------------------------------------- kill switch
+
+def kill_switch_state(session: Session) -> dict | None:
+    o = session.scalars(select(HaoAutonomyOverride).where(HaoAutonomyOverride.category == GLOBAL,
+                                                          HaoAutonomyOverride.active)
+                        .order_by(HaoAutonomyOverride.id.desc()).limit(1)).first()
+    if o is None:
+        return None
+    return {"cap": o.cap, "reason": o.reason, "by": o.created_by, "since": _utc(o.created_at).isoformat()}
+
+
+def kill_switch_on(session: Session, policy: Policy, by: str, reason: str, cap: str = "A1") -> dict:
+    """Any accountable owner can stop the line. AI keeps triaging and writing handoff packets (A1) or
+    stops entirely (A0); nothing is executed, and pending approvals can no longer run."""
+    owners = {o.email.lower() for o in policy.owners.values()}
+    if by.lower() not in owners:
+        raise ControllerError("only a named owner in ownership.yaml can pull the kill switch")
+    if Level(cap) > Level.A1:
+        raise ControllerError("the kill switch caps at A1 or A0")
+    if not reason.strip():
+        raise ControllerError("a reason is required")
+    if kill_switch_state(session):
+        raise ControllerError("the kill switch is already on")
+    o = HaoAutonomyOverride(category=GLOBAL, cap=cap, reason=reason, evidence={}, created_by=by)
+    session.add(o)
+    session.commit()
+    audit.append(session, incident_sys_id="", actor=f"user:{by}", action="autonomy.kill_switch_on",
+                 payload={"cap": cap, "reason": reason}, policy_version=policy.version)
+    return kill_switch_state(session)
+
+
+def kill_switch_off(session: Session, policy: Policy, by: str, note: str = "") -> None:
+    """Only the sponsor can restart AI actions: stopping is easy, restarting is a decision."""
+    sponsor = policy.owners[SPONSOR].email.lower()
+    if by.lower() != sponsor:
+        raise ControllerError(f"only the sponsor ({sponsor}) can switch the kill switch off")
+    rows = session.scalars(select(HaoAutonomyOverride).where(HaoAutonomyOverride.category == GLOBAL,
+                                                            HaoAutonomyOverride.active)).all()
+    if not rows:
+        raise ControllerError("the kill switch is not on")
+    for o in rows:
+        o.active, o.cleared_by, o.cleared_at = False, by, clock.now()
+    session.commit()
+    audit.append(session, incident_sys_id="", actor=f"user:{by}", action="autonomy.kill_switch_off",
+                 payload={"note": note}, policy_version=policy.version)

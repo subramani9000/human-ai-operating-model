@@ -311,3 +311,32 @@ def _feedback(session: Session, item: HaoWorkItem, reviewer: str, verdict: str, 
     session.add(HaoFeedback(decision_id=item.decision_id, work_item_id=item.id, category=item.category,
                             level=item.level, reviewer=reviewer, verdict=verdict, reason_code=reason_code,
                             corrected_category="", corrected_group="", note=note[:1000]))
+
+
+# ----------------------------------------------------------------------------- unreviewed drafts
+
+def sweep_expired(deps: LaneDeps, now=None) -> list[int]:
+    """A2 drafts nobody reviewed in time go to a human instead of waiting forever (run every 15 minutes)."""
+    from datetime import UTC, timedelta
+
+    from hao import clock
+
+    now = now or clock.now()
+    cutoff = now - timedelta(hours=deps.playbooks.approval_timeout_hours)
+    expired = []
+    with deps.session_factory() as session:
+        for item in session.scalars(select(HaoWorkItem).where(HaoWorkItem.state == "awaiting_approval")):
+            created = item.created_at if item.created_at.tzinfo else item.created_at.replace(tzinfo=UTC)
+            if created > cutoff:
+                continue
+            item.state = "expired"
+            session.commit()
+            audit.append(session, actor=deps.actor, action="lane.expired",
+                         payload={"work_item": item.id, "timeout_hours": deps.playbooks.approval_timeout_hours},
+                         incident_sys_id=item.incident_sys_id, decision_id=item.decision_id,
+                         policy_version=deps.policy.version)
+            _note(deps, item.incident_sys_id,
+                  f"[AI draft expired] Not reviewed within {deps.playbooks.approval_timeout_hours:g} h, so no action "
+                  "was taken. A human should pick this ticket up.\n" + (item.draft or {}).get("handoff_summary", ""))
+            expired.append(item.id)
+    return expired

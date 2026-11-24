@@ -32,6 +32,7 @@ class Playbook(BaseModel):
 class Playbooks(BaseModel):
     routing_min_level: Level
     qa_sample_rate: float = Field(ge=0, le=1)
+    approval_timeout_hours: float = Field(default=4, gt=0)
     reason_codes: list[str]
     software_catalog: list[str] = Field(default_factory=list)
     playbooks: dict[str, Playbook]

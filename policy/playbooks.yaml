@@ -8,6 +8,7 @@
 
 routing_min_level: A1        # AI may move a ticket to the policy's assignment group at A1 and above
 qa_sample_rate: 0.2          # share of A3 executions sampled into the QA review queue
+approval_timeout_hours: 4    # an A2 draft nobody reviewed within this time goes to a human (hao platform sweep)
 reason_codes:                # what a reviewer must pick when editing or rejecting a draft
   - wrong_category
   - wrong_action

@@ -125,6 +125,8 @@ def decide(policy: Policy, x: DecisionInput, caps: dict[str, Level] | None = Non
 
     if caps and x.category in caps:
         level = step("controller demotion", level, _lower(level, caps[x.category]), rule="controller-demotion")
+    if caps and "*" in caps:
+        level = step("kill switch", level, _lower(level, caps["*"]), rule="kill-switch")
 
     level = step("category max_level", level, _lower(level, max_level))
 

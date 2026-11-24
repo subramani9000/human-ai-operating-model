@@ -32,8 +32,11 @@ def html(d: dict) -> str:
         f"</td><td>{c['items']}</td><td>{_pct(c['precision'])}</td><td>{escape(c['owner'])}</td>"
         f"<td>{note(c)}</td></tr>" for c in d["categories"])
     ve = d["value_estimate"]
+    ks = (f"<p class='err'><b>Kill switch is ON</b>: {escape(g['kill_switch']['reason'])}</p>"
+          if g.get("kill_switch") else "")
     body = f"""
 <h1>Kaveri: Human+AI operating model</h1>
+{ks}
 <p>Last {d['window_days']} days · policy {escape(d['policy'])} ({escape(d['policy_version'])}) ·
 audit chain {'OK' if g['audit_chain_ok'] else 'BROKEN'} ({g['audit_events']} events)</p>
 <div class='grid'>
@@ -47,6 +50,7 @@ min on approved drafts − {ve['minutes_spent_on_qa']:.0f} min QA − rejected-d
 <tr><td>Resolved by AI (A3)</td><td>{o['ai_resolved']}</td></tr>
 <tr><td>Drafted by AI, approved by a human (A2)</td><td>{o['approved_and_resolved']}</td></tr>
 <tr><td>Waiting for approval</td><td>{o['awaiting_approval']}</td></tr>
+<tr><td>Drafts expired unreviewed (went to a human)</td><td>{o['expired_unreviewed']}</td></tr>
 <tr><td>Handed off with a context packet (A1 / fallback)</td><td>{o['handed_off'] + o['failed_fallback']}</td></tr>
 <tr><td>Human only (A0)</td><td>{o['human_only']}</td></tr>
 <tr><td>Re-routed to the right group by AI</td><td>{o['rerouted_by_ai']}</td></tr>
