@@ -97,4 +97,31 @@ A running log of what this engagement teaches about forward-deployed engineering
 ---
 
 ## Phase 5: Learning loop
+
+**What was built**
+- Reopen detection from the client's webhooks: idempotent, only for AI-resolved work, inside the 72 h window
+- Autonomy controller: per-item evidence since the last level change; automatic demotions as runtime caps; owner-only promotions that edit `autonomy.yaml` for the PR; owner-only clearing
+- Policy hot-reload with an audit event
+- Leadership dashboard measured against the pilot targets, with a stated-assumption "human hours redirected" estimate
+- A shared clock and `hao pilot simulate`: 28 days × 200 tickets/day through the real system, with simulated reviewers, QA, users and owners
+
+**FDE lessons**
+1. **Simulate the loop before the client runs it.** Unit tests checked each rule. Only running weeks of traffic through the whole system showed what the rules *do together*. Two design bugs that every unit test passed came out of the first two simulation runs.
+2. **Bug 1: a demotion with no way back.** `password_reset` was demoted A2 → A1 on day 2 after one real error and one random reopen in 16 items, and never recovered: at A1 there are no drafts to review, so no evidence can ever accumulate. Fix: demotion removes *autonomy*, not *oversight*. Low precision at A2 blocks promotion instead; only `unsafe` demotes from A2.
+3. **Bug 2: sampling bias.** Promoted categories were demoted two days later at "85.7% precision". Positives came from a 20% QA sample, but negatives (reopens) came from 100% of executions. The true error rate was a few percent. Fix: precision from verified items only, reopens as a rate over all executions. **If the denominators don't match, the metric is wrong, however good the code is.**
+4. **Make getting less autonomy cheap and getting more autonomy expensive.** Demotion is automatic and needs no deploy. Promotion is a named owner signing a PR. That asymmetry is what lets a cautious sponsor say yes to the pilot at all.
+5. **The dashboard must survive a sceptical CFO.** "Human hours redirected" is an estimate, so the assumptions live in a reviewed file and are printed next to the number. A number without its assumptions gets you a meeting about the number.
+6. **Let the data say why a target was missed, and who owns the fix.** The simulation missed the 35–40% A3 target (7.9% over the pilot, 10.5% once all promotions landed). The funnel in the readout shows where the rest went, for tickets in the three promoted categories:
+   - **39% were held back by policy, not by the AI.** Password resets and unlocks on KLMS and WMS-Pro are capped at A2 because those apps are medium-risk. Whether an identity action on a medium-risk app deserves A3 is a decision for the app owner and the sponsor, not an engineering task.
+   - **30% by classifier confidence < 0.80.** That's the calibration problem from Phase 3, which a better classifier can fix.
+   - Only 4 categories have playbooks at all, so even a perfect run can't pass ~32% of volume without playbooks for VPN, email and printer.
+
+   "The AI isn't good enough" becomes three concrete workstreams with three different owners.
+
+**What I'd do differently**
+- _(add your own reflections here, e.g. after re-running the pilot with `--classifier claude`)_
+
+---
+
+## Phase 6: Hardening and handover
 _(to be written)_

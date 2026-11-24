@@ -44,8 +44,8 @@ The operating model is **code**: [`policy/autonomy.yaml`](policy/autonomy.yaml) 
 | **2. Intake** | Ticketing adapter, idempotent webhook receiver, PII redaction, keyword + Claude classifiers, golden-set evals | ✅ Done |
 | **3. Policy engine + audit** | Monotone autonomy decisions with explanations, tripwires, property tests, hash-chained audit log, policy simulation | ✅ Done |
 | **4. Agent lanes** | Playbooks, guarded tools, drafts with guardrails, handoff packets, review console, QA sampling | ✅ Done |
-| 5. Learning loop | Feedback capture, autonomy controller, leadership dashboard | ⏳ Next |
-| 6. Hardening | Docker, CI eval gates, Langfuse tracing, runbook, pilot readout | |
+| **5. Learning loop** | Reopen feedback, autonomy controller, leadership dashboard, 28-day pilot simulation | ✅ Done |
+| 6. Hardening | SSO, unreviewed-draft sweep, CI eval gates, tracing, runbook | ⏳ Next |
 
 See [docs/roadmap.md](docs/roadmap.md) for details.
 
@@ -61,11 +61,13 @@ pip install -e ".[dev]"
 hao policy validate      # check the operating-model policy
 hao generate             # 5,000 synthetic tickets + ground-truth labels (seed 42)
 hao profile              # data-quality profile of the dataset
-pytest -q                # 135 tests (incl. property-based safety invariants and end-to-end lanes)
+pytest -q                # 157 tests (incl. property-based safety invariants and end-to-end lanes)
 hao eval redaction       # PII leakage report
 hao eval classify --golden hard_v1   # keyword baseline on hand-written tickets
 hao policy simulate --promote password_reset=A3   # what would a promotion do?
 hao audit verify         # walk the tamper-evident audit chain
+hao controller status    # per category: policy vs effective level, evidence, proposals
+hao pilot simulate       # 28 days × 200 tickets through the whole system (~10 min)
 ```
 
 ### Run the end-to-end flow
@@ -178,13 +180,28 @@ Synthetic data flatters whoever wrote the generator, so every classifier is meas
 
 **Every AI decision is auditable.** Events are hash-chained and the head hash is anchored outside the database. Edits, deletions and full rewrites are all detected ([ADR 0007](docs/adr/0007-hash-chained-audit-log.md)).
 
+**Autonomy is earned, and lost, from evidence** ([ADR 0010](docs/adr/0010-autonomy-controller.md)). Every approve, edit, reject, QA verdict and user reopen becomes evidence. Demotion is automatic (a runtime cap, no deploy). Promotion is only *proposed*: the named category owner applies it, which edits `autonomy.yaml` for a PR. The [simulated 28-day pilot](docs/pilot-readout-simulated.md) runs 5,600 tickets through the real system with simulated reviewers and users:
+
+| Day | What happened |
+|---|---|
+| 3 | Controller proposes `password_reset` A2 → A3 (100% over 61 reviewed drafts) |
+| 5 | Priya Nair (owner) approves; `account_unlock` proposed |
+| 7 | `account_unlock` promoted |
+| 14 | `how_to_question` promoted (95.5% over 67) |
+| 28 | 442 tickets resolved by AI alone, 855 drafts approved, 3.5% reopen rate, ~144 human hours redirected (est.) |
+
+It also **missed the 35–40% A3 target** (7.9%; 10.5% once all promotions landed) and says why. Of tickets in promoted categories, 39% were held back by *policy*: password resets on medium-risk apps like KLMS are capped at A2. Another 30% were held back by classifier confidence. And only 4 categories have playbooks. Each gap has a different owner. The first two simulation runs also caught two controller design bugs that unit tests didn't (a demotion with no way back, and a sampling-bias error). Both are written up in ADR 0010.
+
+The **leadership dashboard** (`localhost:8002/dashboard`) shows the same view live: pilot targets, level mix, outcomes, override and reopen rates, and human hours redirected with its assumptions (`policy/value.yaml`).
+
 ---
 
 ## Repository layout
 
 ```
 docs/                     The engagement trail: problem, discovery, stakeholders, design, ADRs, journal
-policy/                   autonomy.yaml (levels, caps, rules) · ownership.yaml · taxonomy.yaml · playbooks.yaml (allowed actions)
+policy/                   autonomy.yaml (levels, caps, rules, controller) · ownership.yaml · taxonomy.yaml ·
+                          playbooks.yaml (allowed actions) · value.yaml (dashboard assumptions)
 src/hao/
   synthetic/              Deterministic messy-ticket generator + noise model
   mock_ticketing/         ServiceNow-style client API, signed webhooks, chaos injection
@@ -195,6 +212,9 @@ src/hao/
   evals/                  Golden sets, redaction eval, classification eval
   policy/                 Policy schema + validation, decision engine, simulation
   audit/                  Hash-chained, tamper-evident audit log
+  controller/             Autonomy controller: evidence → demotions and promotion proposals
+  dashboard/              Leadership metrics (HTML + JSON) against the pilot targets
+  pilot/                  End-to-end pilot simulator with simulated humans
   db/                     Data model (client_* = simulated client, hao_* = platform)
   cli.py                  `hao` command
 data/synthetic/           Committed 200-ticket sample (full set via `hao generate`)
@@ -211,7 +231,8 @@ tests/                    Generator, policy, API, adapter, redaction, classifier
 - **Evaluating honestly:** a second, hand-written eval set and metrics weighted by harm, not just accuracy
 - **Building safe LLM integrations:** redaction before the model, forced structured output, prompt-injection handling, fail-safe defaults
 - **Human-in-the-loop that people trust:** the LLM writes words and reviewed playbooks pick the actions; approvals re-check policy and run under the approver's name; the client's own IAM is a second lock
-- **Evidence-driven autonomy:** evals that decide what AI is allowed to do (Phases 3–5)
+- **Evidence-driven autonomy:** evals and human verdicts decide what AI is allowed to do; owners sign promotions
+- **Testing the system, not just the parts:** a pilot simulator that found two design bugs every unit test passed
 
 Lessons learned along the way are in the [FDE journal](docs/fde-journal.md).
 

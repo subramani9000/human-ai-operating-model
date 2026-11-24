@@ -40,12 +40,17 @@ Each phase ends with working code, tests, an update to the [FDE journal](fde-jou
 - [x] QA sampling of A3 executions, pass / fail feedback
 - [ ] Run the Claude drafter on real-looking tickets and review its drafts in the console (needs `ANTHROPIC_API_KEY`)
 
-## ⏳ Phase 5: Learning loop
-- [ ] Feedback capture from the console and from reopen events in the ticketing system
-- [ ] Autonomy controller: nightly precision per category, promotion proposals, automatic demotion
-- [ ] Leadership dashboard: volume by level, precision, reopen rate, resolution time, cost per ticket, **human hours redirected**
+## ✅ Phase 5: Learning loop
+- [x] Feedback capture: review verdicts, QA verdicts, and reopens from the client's webhooks (idempotent, loop-safe)
+- [x] Autonomy controller ([ADR 0010](adr/0010-autonomy-controller.md)): per-item evidence since the last level change; automatic demotion via runtime overrides; owner-approved promotions that edit `autonomy.yaml` for the PR
+- [x] Policy hot-reload (`POST /policy/reload`) with a `policy.loaded` audit event
+- [x] Leadership dashboard (`/dashboard`): pilot targets, level mix, outcomes, override and reopen rates, **human hours redirected** with stated assumptions (`policy/value.yaml`), audit integrity
+- [x] Shared clock + `hao pilot simulate`: weeks of traffic through the real system with simulated reviewers, QA, users and owners → [simulated pilot readout](pilot-readout-simulated.md)
+- [ ] Re-run the pilot simulation with `--classifier claude` (needs `ANTHROPIC_API_KEY`)
 
-## Phase 6: Hardening and handover
+## ⏳ Phase 6: Hardening and handover
 - [ ] Docker Compose for the full stack; Langfuse tracing
 - [ ] CI eval gate: block merges that regress golden-set accuracy or redaction recall
-- [ ] Runbook (on-call, rollback a promotion, rotate secrets) and pilot readout with before/after metrics
+- [ ] SSO in front of `/console` and `/dashboard`; reviewer identity asserted, not typed ([ADR 0009](adr/0009-review-console.md))
+- [ ] Sweep for drafts unreviewed after N hours → hand off to a human
+- [ ] Runbook (on-call, rollback a promotion, clear a demotion, rotate secrets)

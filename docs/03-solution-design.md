@@ -39,10 +39,10 @@ flowchart TD
 5. Clamp to `max_level`. **No step can raise the level**, so every cap in the file always holds.
 6. Record the decision with every step, the policy content hash and its label. **No decision without a policy reference.**
 
-### How autonomy changes (Phase 5)
+### How autonomy changes (`src/hao/controller/autonomy.py`)
 
-- **Promotion** is *proposed* by the controller when a category reaches ≥ 95% precision over ≥ 50 reviewed samples in a rolling 14-day window. The category owner approves it as a policy PR. Humans govern the AI's governance.
-- **Demotion** is *automatic and immediate* when precision drops below 90% or a severity-1 incident is linked to an AI action. The owner is notified.
+- **Promotion** is *proposed* by the controller when a category reaches ≥ 95% precision over ≥ 50 human-verified items in a rolling 14-day window (since its last level change). Only the named category owner can apply it, which edits `autonomy.yaml` for a policy PR. Humans govern the AI's governance.
+- **Demotion** is *automatic and immediate*: any `unsafe` verdict, or precision < 90% over ≥ 10 items at A3. It is written as a runtime override that the engine applies as a cap, with no deploy needed. At A2, low precision blocks promotion instead of demoting, so human review (and the path back) is kept.
 
 ## Components and phases
 
@@ -55,7 +55,7 @@ flowchart TD
 | Intake: context-aware redaction + classifier | **2** ✅ | Keyword baseline + Claude Haiku 5.5; golden-set evals ([ADR 0004](adr/0004-context-aware-redaction.md), [0005](adr/0005-classifier-evaluation.md)) |
 | Policy engine + hash-chained audit log | **3** ✅ | Monotone steps, tripwires, property tests ([ADR 0006](adr/0006-policy-engine-semantics.md), [0007](adr/0007-hash-chained-audit-log.md)) |
 | Agent lanes, playbooks, guarded tools, review console | **4** ✅ | DB-backed state machine, Claude Sonnet 5.5 drafter ([ADR 0008](adr/0008-agent-lanes-and-tools.md), [0009](adr/0009-review-console.md)) |
-| Feedback loop, autonomy controller, dashboard | 5 | |
+| Feedback loop, autonomy controller, leadership dashboard, pilot simulator | **5** ✅ | [ADR 0010](adr/0010-autonomy-controller.md), [simulated readout](pilot-readout-simulated.md) |
 | Docker, CI eval gates, Langfuse, runbook, pilot readout | 6 | |
 
 ## Key data entities
