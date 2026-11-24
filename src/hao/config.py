@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     platform_public_url: str = "http://localhost:8002"  # where the client system sends webhooks
     platform_actor: str = "ai:hao-intake"
 
+    # Access control (ADR 0011): "dev" = no login (local), "proxy" = SSO via an identity-aware proxy
+    auth_mode: str = "dev"
+    auth_email_header: str = "X-Auth-Request-Email"
+    auth_proxy_secret: str = ""  # the proxy adds X-Proxy-Secret; requests without it are rejected
+    auth_allowed_domain: str = "kaveri.example"
+    admin_emails: list[str] = ["ramesh.iyer@kaveri.example"]
+
+    # Webhook hardening
+    webhook_secret_previous: str = ""  # accepted during rotation, alongside webhook_secret
+    webhook_max_age_s: int = 300  # reject deliveries older than this (replay protection)
+
     # LLM
     anthropic_api_key: str = ""
     classifier_model: str = "claude-haiku-5-5"

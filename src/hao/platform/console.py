@@ -38,7 +38,18 @@ def _pill(level: str) -> str:
     return f"<span class='pill {escape(level)}'>{escape(level)}</span>"
 
 
-def index(pending: list[HaoWorkItem], recent: list[HaoWorkItem]) -> str:
+def _banner(user: str | None, kill_switch: dict | None) -> str:
+    who = f"<p style='color:#57606a'>Signed in as <b>{escape(user)}</b></p>" if user else ""
+    ks = ""
+    if kill_switch:
+        ks = (f"<p class='err'><b>Kill switch is ON</b>: AI actions are paused (capped at "
+              f"{escape(kill_switch['cap'])}) since {escape(kill_switch['since'])} by {escape(kill_switch['by'])}: "
+              f"{escape(kill_switch['reason'])}</p>")
+    return who + ks
+
+
+def index(pending: list[HaoWorkItem], recent: list[HaoWorkItem], user: str | None = None,
+          kill_switch: dict | None = None) -> str:
     def rows(items, link=True):
         out = []
         for i in items:
@@ -51,12 +62,13 @@ def index(pending: list[HaoWorkItem], recent: list[HaoWorkItem]) -> str:
     head = "<tr><th>Ticket</th><th>Level</th><th>Lane</th><th>Category</th><th>State</th><th>Plan</th></tr>"
     return _page("Review console", f"""
 <h1>Kaveri: Human+AI review console</h1>
+{_banner(user, kill_switch)}
 <h2>Waiting for you ({len(pending)})</h2><table>{head}{rows(pending)}</table>
 <h2>Recent</h2><table>{head}{rows(recent)}</table>""")
 
 
 def item(i: HaoWorkItem, d: HaoDecision | None, incident: dict, vault: Vault, reason_codes: list[str],
-         error: str = "") -> str:
+         error: str = "", user: str | None = None) -> str:
     draft = i.draft or {}
     reply = vault.reveal(draft.get("reply", ""))
     ctx = i.context or {}
@@ -75,10 +87,13 @@ def item(i: HaoWorkItem, d: HaoDecision | None, incident: dict, vault: Vault, re
                 "<option value='reject'>Reject: a human will handle it</option>")
     reply_box = "" if qa else (f"<p><label>Reply to the user (edit if needed)<br>"
                                f"<textarea name='reply'>{escape(reply)}</textarea></label></p>")
+    who = (f"<p>Reviewing as <b>{escape(user)}</b> (from your sign-in)</p>" if user else
+           "<p><label>Your email <input name='reviewer' type='email' required placeholder='you@kaveri.example'>"
+           "</label></p>")
     form = "" if i.state not in ("awaiting_approval", "qa_pending") else f"""
 <h2>{'QA review' if qa else 'Your decision'}</h2>
 <form method='post' action='/console/items/{i.id}'>
- <p><label>Your email <input name='reviewer' type='email' required placeholder='you@kaveri.example'></label></p>
+ {who}
  {reply_box}
  <p><label>Verdict <select name='verdict'>{verdicts}</select></label>
     <label>Reason (required for edit / reject / fail)
