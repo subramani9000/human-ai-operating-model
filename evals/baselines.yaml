@@ -1,0 +1,19 @@
+# Eval baselines enforced in CI by `hao eval gate` (ADR 0011).
+# Higher is better for recall/precision/accuracy/macro_f1 (may drop by at most `tolerance`).
+# Counts of bad outcomes (risk_downgrades, over_autonomy_high_risk) may never increase.
+# Update only deliberately, in the PR that earns the improvement: `hao eval gate --update`.
+metrics:
+  keyword/golden_v1:
+    accuracy: 0.9467
+    macro_f1: 0.947
+    over_autonomy_high_risk: 1
+    risk_downgrades: 14
+  keyword/hard_v1:
+    accuracy: 0.2667
+    macro_f1: 0.3033
+    over_autonomy_high_risk: 2
+    risk_downgrades: 5
+  redaction:
+    precision: 1.0
+    recall: 1.0
+tolerance: 0.005

@@ -24,13 +24,9 @@ jobs:
         run: hao generate --n 5000 --seed 42 --sample 200
       - name: Tests
         run: pytest -q
-      - name: Eval — redaction (fails the build if PII leaks; see tests/test_redaction.py)
-        run: hao eval redaction --no-write
-      - name: Eval — keyword baseline on both golden sets
-        run: |
-          hao eval classify --classifier keyword --golden golden_v1 --no-write | head -20
-          hao eval classify --classifier keyword --golden hard_v1 --no-write | head -20
-      - name: Policy simulation — what would a promotion do?
-        run: hao policy simulate --golden golden_v1 --promote password_reset=A3 --no-write | head -12
+      - name: Eval gate — fail if redaction, classification or simulated over-autonomy got worse
+        run: hao eval gate
+      - name: Redaction recall gate (exits non-zero if any known PII leaks)
+        run: hao eval redaction --no-write --min-recall 0.99 > /dev/null
       - name: Short end-to-end pilot simulation (smoke test of the whole learning loop)
         run: hao pilot simulate --days 6 --per-day 60 --out /tmp/pilot-readout.md && head -20 /tmp/pilot-readout.md

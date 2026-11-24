@@ -17,6 +17,8 @@ mock_app = typer.Typer(help="Mock client ticketing system", no_args_is_help=True
 golden_app = typer.Typer(help="Golden evaluation sets", no_args_is_help=True)
 audit_app = typer.Typer(help="Tamper-evident audit log", no_args_is_help=True)
 pilot_app = typer.Typer(help="Simulated pilot runs", no_args_is_help=True)
+killswitch_app = typer.Typer(help="Pause all AI actions (any owner) / resume them (sponsor only)",
+                             no_args_is_help=True)
 controller_app = typer.Typer(help="Autonomy controller: evidence → demotions and promotion proposals",
                              no_args_is_help=True)
 eval_app = typer.Typer(help="Evaluations", no_args_is_help=True)
@@ -25,6 +27,7 @@ app.add_typer(golden_app, name="golden")
 app.add_typer(audit_app, name="audit")
 app.add_typer(controller_app, name="controller")
 app.add_typer(pilot_app, name="pilot")
+app.add_typer(killswitch_app, name="killswitch")
 app.add_typer(eval_app, name="eval")
 app.add_typer(platform_app, name="platform")
 app.add_typer(policy_app, name="policy")
@@ -288,6 +291,65 @@ def pilot_simulate(
     typer.secho(f"Wrote {out}", fg=typer.colors.GREEN)
 
 
+@killswitch_app.command("on")
+def killswitch_on(by: str = typer.Option(..., help="Your email (a named owner)"),
+                  reason: str = typer.Option(..., help="Why: goes in the audit log"),
+                  cap: str = typer.Option("A1", help="A1: AI still triages and hands off · A0: AI does nothing")):
+    """Stop the line: every category is capped at once, and pending approvals can no longer execute."""
+    from hao.controller import autonomy as ctl
+    from hao.policy.schema import load_policy
+
+    with _platform_sessions()() as session:
+        try:
+            state = ctl.kill_switch_on(session, load_policy(get_settings().policy_dir), by, reason, cap)
+        except ctl.ControllerError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+    typer.secho(f"KILL SWITCH ON: all categories capped at {state['cap']}.", fg=typer.colors.RED)
+
+
+@killswitch_app.command("off")
+def killswitch_off(by: str = typer.Option(..., help="Sponsor's email"), note: str = ""):
+    """Resume AI actions. Sponsor only."""
+    from hao.controller import autonomy as ctl
+    from hao.policy.schema import load_policy
+
+    with _platform_sessions()() as session:
+        try:
+            ctl.kill_switch_off(session, load_policy(get_settings().policy_dir), by, note)
+        except ctl.ControllerError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+    typer.secho("Kill switch off: policy levels apply again.", fg=typer.colors.GREEN)
+
+
+@killswitch_app.command("status")
+def killswitch_status():
+    from hao.controller import autonomy as ctl
+
+    with _platform_sessions()() as session:
+        state = ctl.kill_switch_state(session)
+    typer.echo("off" if state is None else f"ON since {state['since']} by {state['by']}: {state['reason']} "
+                                           f"(cap {state['cap']})")
+
+
+@platform_app.command("sweep")
+def platform_sweep():
+    """Expire A2 drafts nobody reviewed within approval_timeout_hours (schedule every 15 minutes)."""
+    from hao.adapters.servicenow import ServiceNowAdapter
+    from hao.agents.drafter import TemplateDrafter
+    from hao.agents.lanes import LaneDeps, sweep_expired
+    from hao.agents.playbooks import load_playbooks
+    from hao.policy.schema import load_policy
+
+    s = get_settings()
+    with ServiceNowAdapter.from_settings(s) as adapter:
+        deps = LaneDeps(session_factory=_platform_sessions(), adapter=adapter, policy=load_policy(s.policy_dir),
+                        playbooks=load_playbooks(s.policy_dir), drafter=TemplateDrafter(), actor="ai:hao-agent")
+        expired = sweep_expired(deps)
+    typer.echo(f"Expired {len(expired)} unreviewed draft(s): {expired}")
+
+
 @db_app.command("init")
 def db_init():
     """Create all tables in DATABASE_URL."""
@@ -378,6 +440,30 @@ def eval_classify(
         name = f"{classifier}-{golden}.md"
         (REPORT_DIR / name).write_text(md, encoding="utf-8")
         typer.secho(f"\nWrote {REPORT_DIR / name}", fg=typer.colors.GREEN)
+
+
+@eval_app.command("gate")
+def eval_gate(update: bool = typer.Option(False, help="Write current values as the new baselines"),
+              classifier: str = typer.Option("keyword")):
+    """CI gate: fail if redaction, classification or simulated over-autonomy got worse than the baselines."""
+    from hao.evals.gate import BASELINES, compare, load_baselines, measure, write_baselines
+
+    current = measure(classifier)
+    if update or not BASELINES.exists():
+        tol = load_baselines()[1] if BASELINES.exists() else 0.005
+        write_baselines(current, tol)
+        typer.secho(f"Baselines written to {BASELINES}", fg=typer.colors.GREEN)
+        return
+    baseline, tol = load_baselines()
+    rows = compare(baseline, current, tol)
+    typer.echo(f"{'metric':<52}{'baseline':>10}{'current':>10}  result")
+    for r in rows:
+        mark = "ok " if r["ok"] else "FAIL"
+        typer.echo(f"{r['metric']:<52}{str(r['baseline']):>10}{str(r['current']):>10}  {mark} {r['note']}")
+    if not all(r["ok"] for r in rows):
+        typer.secho("Eval gate FAILED: this change makes the system measurably worse.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.secho("Eval gate passed.", fg=typer.colors.GREEN)
 
 
 @platform_app.command("serve")
