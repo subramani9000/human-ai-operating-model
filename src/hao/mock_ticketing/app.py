@@ -14,7 +14,6 @@ import json
 import random
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -24,6 +23,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import asc, delete, desc, func, select
 from sqlalchemy.orm import Session
 
+from hao import clock
 from hao.config import REPO_ROOT, Settings, get_settings
 from hao.db.models import (
     ClientIdentityEvent,
@@ -128,7 +128,7 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
 
     @app.get("/health", tags=["meta"])
     def health():
-        return {"status": "ok", "time": datetime.now(UTC).isoformat()}
+        return {"status": "ok", "time": clock.now().isoformat()}
 
     # ------------------------------------------------------------------ incidents
 
@@ -176,7 +176,7 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
         old_state = inc.state
         _apply_fields(inc, body)
         if new_state == "6" and old_state != "6":
-            inc.resolved_at = datetime.now(UTC)
+            inc.resolved_at = clock.now()
         if old_state == "6" and new_state in ("1", "2"):
             inc.reopen_count += 1
             inc.resolved_at = None
@@ -185,7 +185,7 @@ def create_app(settings: Settings | None = None, *, webhook_transport: httpx.Bas
         if body.get("comments"):  # customer-visible, unlike work notes
             session.add(ClientWorkNote(incident_sys_id=sys_id, kind="comment", author=x_actor,
                                        note=str(body["comments"])))
-        inc.sys_updated_on = datetime.now(UTC)
+        inc.sys_updated_on = clock.now()
         session.commit()
         emit(tasks, "incident.updated", inc)
         return {"result": incident_to_dict(inc)}

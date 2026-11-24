@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from hao import clock
 from hao.db.models import HaoAuditEvent
 
 GENESIS = "0" * 64
@@ -61,7 +62,7 @@ def append(session: Session, *, incident_sys_id: str, actor: str, action: str, p
         with _WRITE_LOCK:
             last = head(session)
             prev = last.hash if last else GENESIS
-            ts = datetime.now(UTC)
+            ts = clock.now()
             ev = HaoAuditEvent(ts=ts, incident_sys_id=incident_sys_id, actor=actor, action=action, payload=payload,
                                policy_version=policy_version, decision_id=decision_id, prev_hash=prev)
             ev.hash = compute_hash(prev, ts=ts, incident_sys_id=incident_sys_id, actor=actor, action=action,

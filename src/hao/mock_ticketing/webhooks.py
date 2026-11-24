@@ -12,12 +12,12 @@ import json
 import random
 import time
 import uuid
-from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from hao import clock
 from hao.db.models import ClientWebhookDelivery, ClientWebhookSubscription
 
 SIGNATURE_HEADER = "X-Kaveri-Signature"
@@ -53,7 +53,7 @@ def deliver_event(
 
     payload = {
         "event": event,
-        "sent_at": datetime.now(UTC).isoformat(),
+        "sent_at": clock.now().isoformat(),
         "incident": incident,
     }
     body = json.dumps(payload, separators=(",", ":")).encode()
