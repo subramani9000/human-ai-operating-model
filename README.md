@@ -45,9 +45,18 @@ The operating model is **code**: [`policy/autonomy.yaml`](policy/autonomy.yaml) 
 | **3. Policy engine + audit** | Monotone autonomy decisions with explanations, tripwires, property tests, hash-chained audit log, policy simulation | ✅ Done |
 | **4. Agent lanes** | Playbooks, guarded tools, drafts with guardrails, handoff packets, review console, QA sampling | ✅ Done |
 | **5. Learning loop** | Reopen feedback, autonomy controller, leadership dashboard, 28-day pilot simulation | ✅ Done |
-| 6. Hardening | SSO, unreviewed-draft sweep, CI eval gates, tracing, runbook | ⏳ Next |
+| **6. Hardening + handover** | SSO, kill switch, approval timeouts, webhook replay protection, CI eval gate, metrics, runbook, threat model | ✅ Done |
 
-See [docs/roadmap.md](docs/roadmap.md) for details.
+All six phases are complete. Running the Claude classifier and drafter against the evals needs an `ANTHROPIC_API_KEY` and is the main open item ([roadmap](docs/roadmap.md), [handover](docs/handover.md)).
+
+### Read the engagement like a client would
+
+| | |
+|---|---|
+| The ask | [Problem statement](docs/00-problem-statement.md) · [Discovery notes](docs/01-discovery-notes.md) · [Stakeholders + RACI](docs/02-stakeholder-map.md) |
+| The design | [Solution design](docs/03-solution-design.md) · [ADRs 0001–0011](docs/adr/) · [Threat model](docs/threat-model.md) |
+| The evidence | [Eval reports](docs/eval-reports/) · [Simulated pilot readout](docs/pilot-readout-simulated.md) |
+| The handover | [Runbook](docs/runbook.md) · [Handover](docs/handover.md) · [FDE journal](docs/fde-journal.md) |
 
 ---
 
@@ -61,13 +70,15 @@ pip install -e ".[dev]"
 hao policy validate      # check the operating-model policy
 hao generate             # 5,000 synthetic tickets + ground-truth labels (seed 42)
 hao profile              # data-quality profile of the dataset
-pytest -q                # 157 tests (incl. property-based safety invariants and end-to-end lanes)
+pytest -q                # 169 tests (incl. property-based safety invariants and end-to-end lanes)
+hao eval gate            # CI gate: fails if redaction, classification or over-autonomy got worse
 hao eval redaction       # PII leakage report
 hao eval classify --golden hard_v1   # keyword baseline on hand-written tickets
 hao policy simulate --promote password_reset=A3   # what would a promotion do?
 hao audit verify         # walk the tamper-evident audit chain
 hao controller status    # per category: policy vs effective level, evidence, proposals
 hao pilot simulate       # 28 days × 200 tickets through the whole system (~10 min)
+hao killswitch on --by priya.nair@kaveri.example --reason "test"   # stop all AI actions
 ```
 
 ### Run the end-to-end flow
@@ -88,7 +99,7 @@ Password reset is at **A2**, so the platform triages it, plans the actions from 
 ```
 [AI triage · keyword-v1] category: password_reset · application: SSO · confidence 0.95
 Autonomy: A2 (AI drafts, human approves). category default.
-Accountable owner: Priya Nair · suggested group: SD-L1 · policy 2026.11-pilot (c17c371b2e93)
+Accountable owner: Priya Nair · suggested group: SD-L1 · policy 2026.11-pilot (abc4055755f4)
 [AI draft · awaiting approval] http://localhost:8002/console/items/1
 Planned actions: identity.reset_password, customer.reply, incident.resolve
 ```
@@ -195,6 +206,14 @@ It also **missed the 35–40% A3 target** (7.9%; 10.5% once all promotions lande
 The **leadership dashboard** (`localhost:8002/dashboard`) shows the same view live: pilot targets, level mix, outcomes, override and reopen rates, and human hours redirected with its assumptions (`policy/value.yaml`).
 
 ---
+
+**Ready to operate, not just to demo** ([ADR 0011](docs/adr/0011-production-hardening.md)):
+- **SSO via an identity-aware proxy.** The reviewer is whoever is signed in; a forged `reviewer` field is ignored.
+- **A kill switch.** Any owner can pause every AI action instantly; only the sponsor can resume.
+- **Approval timeouts.** Unreviewed drafts go to a human after 4 h.
+- **Webhook hardening.** Replay protection and zero-downtime secret rotation.
+- **Observability.** JSON logs with correlation ids (and no personal data), plus Prometheus metrics.
+- **An eval gate in CI.** It blocks any change that makes the system measurably worse: deleting a single safety rule from the policy fails it, even though every unit test still passes.
 
 ## Repository layout
 

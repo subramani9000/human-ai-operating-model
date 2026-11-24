@@ -124,4 +124,26 @@ A running log of what this engagement teaches about forward-deployed engineering
 ---
 
 ## Phase 6: Hardening and handover
-_(to be written)_
+
+**What was built**
+- SSO via an identity-aware proxy, identity asserted rather than typed, admin roles
+- Kill switch (any owner on, sponsor off), approval timeouts, webhook replay protection and secret rotation
+- CI eval gate against reviewed baselines; structured logs and Prometheus metrics
+- Runbook, threat model, handover
+
+**FDE lessons**
+1. **Hardening is closing the risks you wrote down.** Every item in this phase was already an "⚠️ Consequence" in an earlier ADR. Writing risks down as you go means the go-live checklist already exists when you get there.
+2. **Use the client's identity system; don't build one.** Kaveri already has an IdP with MFA. The platform's only job is to refuse unproven identities. A forged `reviewer` field in a request is ignored, and a test proves it.
+3. **Stopping should be easier than starting.** Any accountable owner can pull the kill switch with one command. Only the sponsor can switch it back on. The same asymmetry as promotion vs demotion, for the same reason.
+4. **Unit tests check code; the eval gate checks behaviour.** Deleting the security tripwire passes every unit test, because no test asserts that specific phrase. The eval gate fails it at once, because high-risk over-autonomy went from 1 to 2. Gate on the outcomes the ADRs argue from, not just on tests passing.
+5. **Logs are a data-handling surface too.** It's easy to log the ticket subject "for debugging". The rule is ids, categories, levels and timings only, and a test checks that no name appears in the log output.
+6. **A handover is a list of owners, not a list of features.** The most useful page is the last one: who owns policy, playbooks, the reviewer rota, audit anchoring and redaction once the FDE team leaves, and which decisions the sponsor still has to make.
+
+**What I'd do differently**
+- _(add your own reflections here)_
+
+---
+
+## Looking back
+
+The client asked to "fix the chatbot". What they needed was a set of decision rights with evidence attached: who may do what, at what autonomy, owned by whom, and how that changes. The code mostly exists to make those rights enforceable and visible. The moments that mattered most weren't the clever parts. They were the 30-minute conversation where an app owner said "category isn't risk", the hand-written eval set that exposed a 68-point accuracy gap, and the simulation runs that found two controller bugs every unit test had passed.

@@ -56,7 +56,7 @@ flowchart TD
 | Policy engine + hash-chained audit log | **3** ✅ | Monotone steps, tripwires, property tests ([ADR 0006](adr/0006-policy-engine-semantics.md), [0007](adr/0007-hash-chained-audit-log.md)) |
 | Agent lanes, playbooks, guarded tools, review console | **4** ✅ | DB-backed state machine, Claude Sonnet 5.5 drafter ([ADR 0008](adr/0008-agent-lanes-and-tools.md), [0009](adr/0009-review-console.md)) |
 | Feedback loop, autonomy controller, leadership dashboard, pilot simulator | **5** ✅ | [ADR 0010](adr/0010-autonomy-controller.md), [simulated readout](pilot-readout-simulated.md) |
-| Docker, CI eval gates, Langfuse, runbook, pilot readout | 6 | |
+| SSO, kill switch, approval timeouts, webhook hardening, eval gate, metrics, runbook, handover | **6** ✅ | [ADR 0011](adr/0011-production-hardening.md), [runbook](runbook.md), [threat model](threat-model.md), [handover](handover.md) |
 
 ## Key data entities
 

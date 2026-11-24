@@ -48,9 +48,17 @@ Each phase ends with working code, tests, an update to the [FDE journal](fde-jou
 - [x] Shared clock + `hao pilot simulate`: weeks of traffic through the real system with simulated reviewers, QA, users and owners → [simulated pilot readout](pilot-readout-simulated.md)
 - [ ] Re-run the pilot simulation with `--classifier claude` (needs `ANTHROPIC_API_KEY`)
 
-## ⏳ Phase 6: Hardening and handover
-- [ ] Docker Compose for the full stack; Langfuse tracing
-- [ ] CI eval gate: block merges that regress golden-set accuracy or redaction recall
-- [ ] SSO in front of `/console` and `/dashboard`; reviewer identity asserted, not typed ([ADR 0009](adr/0009-review-console.md))
-- [ ] Sweep for drafts unreviewed after N hours → hand off to a human
-- [ ] Runbook (on-call, rollback a promotion, clear a demotion, rotate secrets)
+## ✅ Phase 6: Hardening and handover
+- [x] SSO via an identity-aware proxy (oauth2-proxy profile in compose); reviewer identity from the sign-in; admin roles ([ADR 0011](adr/0011-production-hardening.md))
+- [x] Kill switch: any owner can stop, only the sponsor can restart; blocks pending approvals
+- [x] Unreviewed A2 drafts expire to a human after 4 h (`hao platform sweep`)
+- [x] Webhook replay protection (5-min window) and zero-downtime secret rotation
+- [x] CI eval gate with reviewed baselines (`hao eval gate`); proven to catch a removed safety rule
+- [x] Structured JSON logs with correlation ids (no PII) and a Prometheus endpoint. Langfuse deferred until Claude is live
+- [x] [Runbook](runbook.md), [threat model](threat-model.md), [handover](handover.md)
+
+## Next (after the portfolio pilot)
+- [ ] Run the Claude evals, policy simulation and pilot simulation with `--classifier claude` (needs `ANTHROPIC_API_KEY`)
+- [ ] Re-sync job for tickets missed during a long client outage
+- [ ] Re-evaluate on legally approved, redacted historical tickets
+- [ ] Extend to HR ops and finance ops (new taxonomy, owners, playbooks; same platform)
