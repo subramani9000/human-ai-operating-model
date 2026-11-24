@@ -2,6 +2,7 @@
 
 import json
 import random
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -146,7 +147,8 @@ def test_rejects_unsigned_webhooks(wired):
     bad = platform.post("/webhooks/ticketing", content=body,
                         headers={"X-Kaveri-Signature": sign(body, "wrong"), "X-Kaveri-Delivery": "d1"})
     assert bad.status_code == 401
-    updated = json.dumps({"event": "incident.updated", "incident": {"sys_id": "x" * 32}}).encode()
+    updated = json.dumps({"event": "incident.updated", "sent_at": datetime.now(UTC).isoformat(),
+                          "incident": {"sys_id": "x" * 32}}).encode()
     good = platform.post("/webhooks/ticketing", content=updated,
                          headers={"X-Kaveri-Signature": sign(updated, SECRET), "X-Kaveri-Delivery": "d1"})
     assert good.status_code == 202 and good.json()["status"] == "ignored"
