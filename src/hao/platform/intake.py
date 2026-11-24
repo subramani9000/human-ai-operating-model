@@ -7,12 +7,15 @@ from __future__ import annotations
 
 from collections import Counter
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from hao import clock
 from hao.adapters.base import TicketingAdapter, TicketingError
 from hao.agents.lanes import LaneDeps, run_lane
 from hao.audit import log as audit
-from hao.db.models import HaoDecision, HaoIntakeResult, HaoProcessedEvent
+from hao.controller.autonomy import load_caps
+from hao.db.models import HaoDecision, HaoFeedback, HaoIntakeResult, HaoProcessedEvent
 from hao.intake.classifiers import Classifier
 from hao.intake.redaction import Redactor
 from hao.policy.engine import Decision, DecisionInput, decide
@@ -91,7 +94,9 @@ def process_created(
         work_note_error="",
     )
     x = decision_input(incident, result)
-    d = decide(policy, x)
+    with session_factory() as session:
+        caps = load_caps(session)  # runtime demotions from the autonomy controller
+    d = decide(policy, x, caps)
 
     with session_factory() as session:
         session.add(result)
@@ -146,3 +151,45 @@ def _mark(session: Session, delivery_id: str, status: str, detail: str = "") -> 
     if ev:
         ev.status, ev.detail = status, detail or ""
     session.commit()
+
+
+def process_reopen(incident: dict, *, delivery_id: str, session_factory: sessionmaker[Session], policy: Policy,
+                   now=None) -> HaoFeedback | None:
+    """A user reopened a ticket. If the AI resolved it (A3, or an approved A2) within the reopen window,
+    that is negative evidence for the category, and may trigger an immediate demotion."""
+    from datetime import UTC, timedelta
+
+    from hao.controller.autonomy import check_demotion
+    from hao.db.models import HaoWorkItem
+
+    sys_id, count = incident["sys_id"], int(incident.get("reopen_count") or 0)
+    now = now or clock.now()
+    with session_factory() as session:
+        item = session.scalars(select(HaoWorkItem).where(HaoWorkItem.incident_sys_id == sys_id,
+                                                         HaoWorkItem.state == "executed")
+                               .order_by(HaoWorkItem.id.desc()).limit(1)).first()
+        marker = f"reopen #{count}"
+        if item is None:
+            _mark(session, delivery_id, "ignored", "reopened ticket was not resolved by AI")
+            return None
+        done_at = item.updated_at if item.updated_at.tzinfo else item.updated_at.replace(tzinfo=UTC)
+        if now - done_at > timedelta(hours=policy.controller.reopen_window_hours):
+            _mark(session, delivery_id, "ignored", "reopened outside the reopen window")
+            return None
+        if session.scalar(select(HaoFeedback).where(HaoFeedback.work_item_id == item.id,
+                                                    HaoFeedback.verdict == "reopened",
+                                                    HaoFeedback.note == marker)):
+            _mark(session, delivery_id, "ignored", "reopen already recorded")
+            return None
+        fb = HaoFeedback(decision_id=item.decision_id, work_item_id=item.id, category=item.category,
+                         level=item.level, reviewer="system:ticketing", verdict="reopened",
+                         reason_code="reopened_by_user", corrected_category="", corrected_group="", note=marker)
+        session.add(fb)
+        session.commit()
+        audit.append(session, incident_sys_id=sys_id, actor="system:ticketing", action="feedback.reopened",
+                     payload={"work_item": item.id, "category": item.category, "level": item.level,
+                              "reopen_count": count}, policy_version=policy.version, decision_id=item.decision_id)
+        check_demotion(session, policy, item.category)
+        _mark(session, delivery_id, "processed", marker)
+        session.refresh(fb)
+        return fb

@@ -28,13 +28,17 @@ from hao.agents.lanes import LaneDeps, ReviewError, review
 from hao.agents.playbooks import Playbooks, load_playbooks
 from hao.audit import log as audit
 from hao.config import Settings, get_settings
+from hao.controller import autonomy as ctl
+from hao.dashboard import metrics as dashboard
+from hao.dashboard import render
+from hao.dashboard.metrics import load_value
 from hao.db.models import HaoAuditEvent, HaoDecision, HaoIntakeResult, HaoProcessedEvent, HaoWorkItem
 from hao.db.session import init_db, make_engine, make_session_factory
 from hao.intake.classifiers import Classifier, make_classifier
 from hao.intake.redaction import Redactor
 from hao.mock_ticketing.webhooks import verify
 from hao.platform import console
-from hao.platform.intake import process_created
+from hao.platform.intake import process_created, process_reopen
 from hao.policy.schema import Policy, load_policy
 
 
@@ -54,21 +58,30 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
         raise ValueError(f"playbooks do not match policy: {problems}")
     app = FastAPI(title="Human+AI operating model: platform", version="0.4.0")
     app.state.session_factory = session_factory
-    app.state.policy = policy
 
-    with session_factory() as session:  # record which policy version is live, once per change
-        last = session.scalar(select(HaoAuditEvent).where(HaoAuditEvent.action == "policy.loaded")
-                              .order_by(HaoAuditEvent.id.desc()).limit(1))
-        if last is None or last.policy_version != policy.version:
-            audit.append(session, incident_sys_id="", actor="system:platform", action="policy.loaded",
-                         payload={"label": policy.version_label,
-                                  "levels": {k: c.current_level.value for k, c in policy.categories.items()}},
-                         policy_version=policy.version)
+    def set_policy(new: Policy, actor: str = "system:platform") -> None:
+        """Swap the live policy (after a merged policy PR). Recorded once per version change."""
+        problems_ = playbooks.check_against(new)
+        if problems_:
+            raise ValueError(f"playbooks do not match policy: {problems_}")
+        app.state.policy = new
+        with session_factory() as session:
+            last = session.scalar(select(HaoAuditEvent).where(HaoAuditEvent.action == "policy.loaded")
+                                  .order_by(HaoAuditEvent.id.desc()).limit(1))
+            if last is None or last.policy_version != new.version:
+                audit.append(session, incident_sys_id="", actor=actor, action="policy.loaded",
+                             payload={"label": new.version_label,
+                                      "levels": {k: c.current_level.value for k, c in new.categories.items()}},
+                             policy_version=new.version)
+
+    app.state.set_policy = set_policy
+    set_policy(policy)
 
     agent_actor = settings.platform_actor.replace("intake", "agent")
 
     def lane_deps(adapter: TicketingAdapter) -> LaneDeps:
-        return LaneDeps(session_factory=session_factory, adapter=adapter.with_actor(agent_actor), policy=policy,
+        return LaneDeps(session_factory=session_factory, adapter=adapter.with_actor(agent_actor),
+                        policy=app.state.policy,
                         playbooks=playbooks, drafter=drafter, redactor=redactor, actor=agent_actor,
                         console_url=settings.public_console_url, rng=rng)
 
@@ -76,7 +89,8 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
         adapter = adapter_factory()
         try:
             process_created(incident, delivery_id=delivery_id, session_factory=session_factory, adapter=adapter,
-                            classifier=classifier, redactor=redactor, policy=policy, actor=settings.platform_actor,
+                            classifier=classifier, redactor=redactor, policy=app.state.policy,
+                            actor=settings.platform_actor,
                             lane_deps=lane_deps(adapter) if lanes else None)
         finally:
             if hasattr(adapter, "close"):
@@ -84,8 +98,8 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "classifier": classifier.name, "policy": policy.version_label,
-                "policy_version": policy.version}
+        return {"status": "ok", "classifier": classifier.name, "policy": app.state.policy.version_label,
+                "policy_version": app.state.policy.version}
 
     @app.post("/webhooks/ticketing", status_code=202)
     async def receive(
@@ -104,12 +118,14 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
         if not x_kaveri_delivery or not incident.get("sys_id"):
             raise HTTPException(400, "missing delivery id or incident")
 
+        reopened = (event == "incident.updated" and str(incident.get("state")) in ("1", "2")
+                    and int(incident.get("reopen_count") or 0) > 0)
         with session_factory() as session:
-            status = "accepted" if event == "incident.created" else "ignored"
+            status = "accepted" if event == "incident.created" or reopened else "ignored"
             session.add(HaoProcessedEvent(delivery_id=x_kaveri_delivery, event=event,
                                           incident_sys_id=incident["sys_id"], status=status,
                                           detail="" if status == "accepted"
-                                          else "intake handles incident.created only"))
+                                          else "only created and reopened events are processed"))
             try:
                 session.commit()
             except IntegrityError:
@@ -117,6 +133,10 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
 
         if event == "incident.created":
             tasks.add_task(run_intake, incident, x_kaveri_delivery)
+            return {"status": "accepted"}
+        if reopened:
+            tasks.add_task(process_reopen, incident, delivery_id=x_kaveri_delivery, session_factory=session_factory,
+                           policy=app.state.policy)
             return {"status": "accepted"}
         return {"status": "ignored"}
 
@@ -217,6 +237,38 @@ def create_app(settings: Settings, adapter_factory: Callable[[], TicketingAdapte
         except HTTPException as exc:
             return RedirectResponse(f"/console/items/{item_id}?error={exc.detail}", status_code=303)
         return RedirectResponse("/console", status_code=303)
+
+    # ------------------------------------------------------------------ autonomy controller
+
+    @app.get("/controller/status")
+    def controller_status():
+        with session_factory() as session:
+            return ctl.status(session, app.state.policy)
+
+    @app.post("/controller/run")
+    def controller_run():
+        """Nightly job endpoint: demotion checks for every category, then promotion proposals."""
+        with session_factory() as session:
+            r = ctl.run(session, app.state.policy)
+            return {"demoted": r.demoted, "proposed": r.proposed}
+
+    @app.post("/policy/reload")
+    def policy_reload():
+        """Load policy/ from disk after a policy PR is merged and deployed."""
+        set_policy(load_policy(settings.policy_dir), actor="system:policy-reload")
+        return {"policy": app.state.policy.version_label, "policy_version": app.state.policy.version}
+
+    # ------------------------------------------------------------------ leadership dashboard
+
+    value = load_value(settings.policy_dir)
+
+    @app.get("/dashboard.json")
+    def dashboard_json(days: int = 28):
+        return dashboard.compute(session_factory, app.state.policy, value, days=days)
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    def dashboard_html(days: int = 28):
+        return render.html(dashboard.compute(session_factory, app.state.policy, value, days=days))
 
     @app.get("/metrics")
     def metrics():

@@ -24,6 +24,7 @@ from hao.agents.playbooks import Playbooks
 from hao.agents.retrieval import BM25, Doc
 from hao.agents.tools import ToolContext, ToolRefused, run_tool
 from hao.audit import log as audit
+from hao.controller.autonomy import check_demotion, load_caps
 from hao.db.models import HaoFeedback, HaoIntakeResult, HaoWorkItem
 from hao.intake.redaction import Redactor
 from hao.intake.taxonomy import default_taxonomy
@@ -255,10 +256,13 @@ def review(deps: LaneDeps, item_id: int, *, reviewer: str, verdict: str, reason_
 
         if item.state == "qa_pending" and verdict in ("pass", "fail"):
             item.state, item.reviewer = "qa_done", reviewer
-            _feedback(session, item, reviewer, f"qa_{verdict}", reason_code, note)
+            target = session.get(HaoWorkItem, item.parent_id) if item.parent_id else item
+            _feedback(session, target, reviewer, f"qa_{verdict}", reason_code, note)  # evidence about the A3 item
             session.commit()
             audit.append(session, actor=f"user:{reviewer}", action="qa.reviewed",
                          payload={"work_item": item.id, "verdict": verdict, "reason_code": reason_code}, **common)
+            if verdict == "fail":
+                check_demotion(session, deps.policy, item.category)
             return item
         if item.state != "awaiting_approval" or verdict not in ("approve", "edit", "reject"):
             raise ReviewError(f"cannot {verdict} an item in state {item.state}")
@@ -271,11 +275,12 @@ def review(deps: LaneDeps, item_id: int, *, reviewer: str, verdict: str, reason_
                          payload={"work_item": item.id, "reason_code": reason_code}, **common)
             _note(deps, item.incident_sys_id, f"[AI draft rejected by {reviewer}] reason: {reason_code}. "
                                               "A human will handle this ticket.")
+            check_demotion(session, deps.policy, item.category)
             return item
 
         # approve / edit: re-check the decision under the policy *now*, which may have changed since the draft
         x = DecisionInput(**item.context["decision_input"])
-        now = decide(deps.policy, x)
+        now = decide(deps.policy, x, load_caps(session))
         if now.level < Level.A2:
             raise ReviewError(f"policy {now.policy_label} now gives {now.level} for this ticket; it can't be executed")
         text = item.draft.get("reply", "") if verdict == "approve" else (reply or "")
@@ -294,6 +299,8 @@ def review(deps: LaneDeps, item_id: int, *, reviewer: str, verdict: str, reason_
                      payload={"work_item": item.id, "reason_code": reason_code}, **common)
         notes = vault.reveal(item.draft.get("close_notes", ""))
         ok = _execute(deps, session, item, incident, vault.reveal(text), notes, Level.A2, f"user:{reviewer}", common)
+        if verdict == "edit":
+            check_demotion(session, deps.policy, item.category)
         _note(deps, item.incident_sys_id,
               f"[AI draft {'approved' if verdict == 'approve' else 'edited and approved'} by {reviewer}] "
               + ("actions executed." if ok else f"execution failed: {item.error}"))
