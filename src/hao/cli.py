@@ -16,10 +16,15 @@ db_app = typer.Typer(help="Database", no_args_is_help=True)
 mock_app = typer.Typer(help="Mock client ticketing system", no_args_is_help=True)
 golden_app = typer.Typer(help="Golden evaluation sets", no_args_is_help=True)
 audit_app = typer.Typer(help="Tamper-evident audit log", no_args_is_help=True)
+pilot_app = typer.Typer(help="Simulated pilot runs", no_args_is_help=True)
+controller_app = typer.Typer(help="Autonomy controller: evidence → demotions and promotion proposals",
+                             no_args_is_help=True)
 eval_app = typer.Typer(help="Evaluations", no_args_is_help=True)
 platform_app = typer.Typer(help="Human+AI platform service (our side of the integration)", no_args_is_help=True)
 app.add_typer(golden_app, name="golden")
 app.add_typer(audit_app, name="audit")
+app.add_typer(controller_app, name="controller")
+app.add_typer(pilot_app, name="pilot")
 app.add_typer(eval_app, name="eval")
 app.add_typer(platform_app, name="platform")
 app.add_typer(policy_app, name="policy")
@@ -185,6 +190,102 @@ def audit_export(out: Path = typer.Option(Path("audit-export.jsonl")), incident:
                                  "decision_id": e.decision_id, "prev_hash": e.prev_hash, "hash": e.hash}) + "\n")
             n += 1
     typer.echo(f"Exported {n} events to {out}")
+
+
+@controller_app.command("status")
+def controller_status():
+    """Per category: policy level, effective level, evidence and open proposals."""
+    from hao.controller import autonomy as ctl
+    from hao.policy.schema import load_policy
+
+    policy = load_policy(get_settings().policy_dir)
+    with _platform_sessions()() as session:
+        rows = ctl.status(session, policy)
+    typer.echo(f"{'category':<22}{'policy':>7}{'effective':>10}{'items':>7}{'precision':>11}  notes")
+    for r in rows:
+        p = "" if r["precision"] is None else f"{100 * r['precision']:.1f}%"
+        notes = ("DEMOTED " if r["demoted"] else "") + (f"proposal #{r['proposal']}" if r["proposal"] else "")
+        typer.echo(f"{r['category']:<22}{r['policy_level']:>7}{r['effective_level']:>10}{r['items']:>7}{p:>11}"
+                   f"  {notes}")
+
+
+@controller_app.command("run")
+def controller_run():
+    """Scheduled run: automatic demotions, then promotion proposals for owners."""
+    from hao.controller import autonomy as ctl
+    from hao.policy.schema import load_policy
+
+    policy = load_policy(get_settings().policy_dir)
+    with _platform_sessions()() as session:
+        r = ctl.run(session, policy)
+    for d in r.demoted:
+        typer.secho(f"DEMOTED {d['category']}: {d['from']} → {d['to']} ({d['reason']})", fg=typer.colors.RED)
+    for p in r.proposed:
+        typer.secho(f"PROPOSAL #{p['proposal']} {p['category']}: {p['from']} → {p['to']} "
+                    f"({100 * p['precision']:.1f}% over {p['items']} items) awaiting {p['owner']}",
+                    fg=typer.colors.GREEN)
+    if not r.demoted and not r.proposed:
+        typer.echo("No changes.")
+
+
+@controller_app.command("apply")
+def controller_apply(proposal: int, approved_by: str = typer.Option(..., help="Category owner's email")):
+    """Owner approves a promotion: edits policy/autonomy.yaml for the PR and records the approval."""
+    from hao.controller import autonomy as ctl
+    from hao.policy.schema import load_policy
+
+    s = get_settings()
+    policy = load_policy(s.policy_dir)
+    with _platform_sessions()() as session:
+        try:
+            ch = ctl.apply_promotion(session, policy, proposal, approved_by, policy_dir=s.policy_dir)
+        except ctl.ControllerError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+    typer.secho(f"Applied: {ch.patch}. Open a PR with policy/autonomy.yaml, then POST /policy/reload after merge.",
+                fg=typer.colors.GREEN)
+
+
+@controller_app.command("clear")
+def controller_clear(category: str, by: str = typer.Option(..., help="Category owner's email"), note: str = ""):
+    """Owner lifts a demotion after fixing its cause. Evidence starts again from zero."""
+    from hao.controller import autonomy as ctl
+    from hao.policy.schema import load_policy
+
+    policy = load_policy(get_settings().policy_dir)
+    with _platform_sessions()() as session:
+        try:
+            n = ctl.clear_override(session, policy, category, by, note)
+        except ctl.ControllerError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Cleared {n} demotion(s) on {category}.")
+
+
+@pilot_app.command("simulate")
+def pilot_simulate(
+    days: int = typer.Option(28, help="Simulated days"),
+    per_day: int = typer.Option(200, help="Tickets per day (Kaveri's real volume is ~600)"),
+    seed: int = typer.Option(99),
+    classifier: str = typer.Option("keyword", help="keyword | claude"),
+    approval_lag_days: int = typer.Option(2, help="Days an owner takes to approve a promotion"),
+    out: Path = typer.Option(REPO_ROOT / "docs" / "pilot-readout-simulated.md"),
+):
+    """Drive weeks of synthetic traffic through the whole system with simulated humans; write a readout."""
+    from hao.pilot.simulate import PilotConfig, render_readout, run_pilot
+
+    cfg = PilotConfig(days=days, per_day=per_day, seed=seed, classifier=classifier,
+                      approval_lag_days=approval_lag_days)
+
+    def progress(d, n, row):
+        typer.echo(f"day {d:>2}/{n}: {row['tickets']} tickets · A3 {row['levels']['A3']} · A2 {row['levels']['A2']}"
+                   f" · AI-resolved {row['ai_resolved']} · approved {row['approved']} · reopened {row['reopened']}")
+
+    result = run_pilot(cfg, progress=progress)
+    out.write_text(render_readout(result), encoding="utf-8")
+    for e in result.events:
+        typer.secho(f"day {e['day']}: {e['type']} {e['category']} {e['from']} → {e['to']}", fg=typer.colors.CYAN)
+    typer.secho(f"Wrote {out}", fg=typer.colors.GREEN)
 
 
 @db_app.command("init")

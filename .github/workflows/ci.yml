@@ -32,3 +32,5 @@ jobs:
           hao eval classify --classifier keyword --golden hard_v1 --no-write | head -20
       - name: Policy simulation — what would a promotion do?
         run: hao policy simulate --golden golden_v1 --promote password_reset=A3 --no-write | head -12
+      - name: Short end-to-end pilot simulation (smoke test of the whole learning loop)
+        run: hao pilot simulate --days 6 --per-day 60 --out /tmp/pilot-readout.md && head -20 /tmp/pilot-readout.md
