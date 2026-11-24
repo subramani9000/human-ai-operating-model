@@ -1,0 +1,25 @@
+# Assumptions behind the "human hours redirected" estimate on the leadership dashboard.
+# Agreed with Priya Nair (L1 lead) from a one-week time study on the floor (discovery D2). These are
+# estimates, and the dashboard always shows them next to the number they produce.
+
+review_minutes: 1.5     # human time to review and approve one A2 draft
+qa_minutes: 3.0         # human time to QA-review one sampled A3 execution
+baseline_p3_resolution_hours: 9.0   # median P3 time-to-resolve before the pilot (problem statement)
+
+# Median hands-on minutes for an L1/L2 agent to resolve a ticket of this category manually.
+handle_minutes:
+  password_reset: 8
+  account_unlock: 6
+  how_to_question: 10
+  software_install: 12
+  vpn_access: 15
+  email_issue: 15
+  printer_issue: 12
+  laptop_hardware: 25
+  app_access_request: 12
+  app_error: 30
+  payroll_access: 15
+  payroll_discrepancy: 30
+  expense_claim_issue: 20
+  security_phishing: 20
+  network_outage: 60

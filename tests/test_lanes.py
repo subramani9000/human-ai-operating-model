@@ -328,3 +328,78 @@ def test_playbooks_validate_against_policy():
 def test_credential_check_does_not_flag_normal_prose():
     assert check_draft(Draft(reply="Your temporary password is on its way by SMS."), set()) == []
     assert check_draft(Draft(reply="password: hunter2"), set())
+
+
+# ----------------------------------------------------------------------------- reopens → evidence → demotion
+
+def reopen(e, sys_id):
+    e.mock.patch(f"/api/now/table/incident/{sys_id}", json={"state": "2"}, headers=H)
+
+
+def test_reopen_of_ai_resolved_ticket_is_negative_feedback(env):
+    e = env(FixedClassifier("password_reset", "SSO"), policy=promoted(POLICY, password_reset="A3"))
+    sys_id = create(e.mock)
+    reopen(e, sys_id)
+    e.mock.patch(f"/api/now/table/incident/{sys_id}", json={"work_notes": "looking"}, headers=H)  # more updates
+    status = {r["category"]: r for r in e.platform.get("/controller/status").json()}
+    assert status["password_reset"]["verdicts"] == {"reopened": 1}  # counted once
+    trail = e.platform.get(f"/decisions/{sys_id}").json()["audit_trail"]
+    assert "feedback.reopened" in [t["action"] for t in trail]
+
+
+def test_reopen_of_human_handled_ticket_is_ignored(env):
+    e = env(FixedClassifier("vpn_access", "GlobalVPN"))
+    sys_id = create(e.mock, short_description="vpn down")
+    e.mock.patch(f"/api/now/table/incident/{sys_id}", headers=H,
+                 json={"state": "6", "close_code": "Solved", "close_notes": "fixed by L1"})
+    reopen(e, sys_id)
+    assert all(r["verdicts"] == {} for r in e.platform.get("/controller/status").json())
+
+
+def test_unsafe_rejection_demotes_the_category_for_new_tickets(env):
+    e = env(FixedClassifier("password_reset", "SSO"))
+    create(e.mock)
+    item = items(e)[0]
+    e.platform.post(f"/work-items/{item['id']}/review",
+                    json={"reviewer": "p@kaveri.example", "verdict": "reject", "reason_code": "unsafe"})
+    status = {r["category"]: r for r in e.platform.get("/controller/status").json()}
+    assert status["password_reset"]["demoted"] and status["password_reset"]["effective_level"] == "A1"
+    new = create(e.mock, short_description="Password reset again")
+    d = e.platform.get(f"/decisions/{new}").json()["decision"]
+    assert d["level"] == "A1" and "controller-demotion" in d["applied_rules"]
+
+
+def test_a3_quality_drop_is_caught_by_the_nightly_run(env):
+    pbs = PLAYBOOKS.model_copy(update={"qa_sample_rate": 1.0})
+    e = env(FixedClassifier("password_reset", "SSO"), policy=promoted(POLICY, password_reset="A3"), playbooks=pbs)
+    for i in range(10):
+        create(e.mock, short_description=f"Password reset request {i}")
+    for n, qa in enumerate(i for i in items(e) if i["lane"] == "qa"):
+        verdict = {"verdict": "fail", "reason_code": "wrong_action"} if n < 2 else {"verdict": "pass"}
+        e.platform.post(f"/work-items/{qa['id']}/review", json={"reviewer": "qa@kaveri.example", **verdict})
+    # The failures came first, when 2 items were too little evidence to act on. The nightly run sees all
+    # 10 items (8/10 = 80% < 90%) and demotes A3 → A2: humans approve every action again.
+    run = e.platform.post("/controller/run").json()
+    assert run["demoted"][0]["category"] == "password_reset" and run["demoted"][0]["to"] == "A2"
+
+
+def test_dashboard_reports_against_pilot_targets(env):
+    pbs = PLAYBOOKS.model_copy(update={"qa_sample_rate": 1.0})
+    e = env(FixedClassifier("password_reset", "SSO"), policy=promoted(POLICY, password_reset="A3"), playbooks=pbs)
+    s1 = create(e.mock)
+    create(e.mock, short_description="Password reset 2")
+    reopen(e, s1)
+    qa = next(i for i in items(e) if i["lane"] == "qa")
+    e.platform.post(f"/work-items/{qa['id']}/review", json={"reviewer": "qa@kaveri.example", "verdict": "pass"})
+    d = e.platform.get("/dashboard.json").json()
+    assert d["volume"] == {"tickets": 2, "by_level": {"A3": 2, "A2": 0, "A1": 0, "A0": 0}}
+    assert d["outcomes"]["ai_resolved"] == 2
+    assert d["quality"]["reopened"] == 1 and d["quality"]["reopen_rate_ai_resolved"] == 0.5
+    assert d["governance"]["audit_chain_ok"] and d["governance"]["decisions_with_audit_record"] == 1.0
+    assert d["governance"]["human_verdicts_captured"] == 1.0
+    # 2 × 8 min saved − 1 QA review × 3 min = 13 min
+    assert d["value_estimate"]["human_hours_redirected"] == round(13 / 60, 1)
+    targets = {t["metric"]: t for t in d["targets"]}
+    assert targets["Reopen rate on AI-resolved tickets"]["met"] is False
+    page = e.platform.get("/dashboard").text
+    assert "Pilot targets" in page and "Human hours redirected" in page
