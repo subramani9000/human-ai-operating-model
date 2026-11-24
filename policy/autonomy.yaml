@@ -86,4 +86,8 @@ controller:
   min_samples: 50
   promote_precision: 0.95     # proposes promotion; owner approves via PR
   demote_precision: 0.90      # automatic, immediate
+  demote_min_samples: 10      # demotion needs less evidence than promotion; an "unsafe" verdict needs one
+  minor_reasons: [tone]       # a draft approved with only these edits still counts as correct work
+  max_reopen_rate: 0.10       # A3 also demotes if more than 10% of its executions are reopened…
+  reopen_min_executions: 20   # …measured over at least this many executions
   reopen_window_hours: 72     # open question in discovery; 72h agreed for pilot

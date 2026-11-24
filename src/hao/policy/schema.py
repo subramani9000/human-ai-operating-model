@@ -96,6 +96,10 @@ class Controller(BaseModel):
     min_samples: int = Field(gt=0)
     promote_precision: float = Field(gt=0, le=1)
     demote_precision: float = Field(gt=0, le=1)
+    demote_min_samples: int = Field(default=10, gt=0)  # demotion acts on less evidence than promotion
+    minor_reasons: list[str] = Field(default_factory=lambda: ["tone"])  # edits for these still count as correct
+    max_reopen_rate: float = Field(default=0.10, gt=0, le=1)  # A3 demotes above this share of reopened executions
+    reopen_min_executions: int = Field(default=20, gt=0)
     reopen_window_hours: int = Field(gt=0)
 
     @model_validator(mode="after")

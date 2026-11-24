@@ -7,14 +7,16 @@ directly; it goes through the ticketing REST API (ADR 0002).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from hao import clock
+
 
 def utcnow() -> datetime:
-    return datetime.now(UTC)
+    return clock.now()
 
 
 class Base(DeclarativeBase):
@@ -255,6 +257,23 @@ class HaoFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class HaoAutonomyOverride(Base):
+    """Runtime demotion written by the autonomy controller. Can only lower a level (ADR 0010)."""
+
+    __tablename__ = "hao_autonomy_overrides"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category: Mapped[str] = mapped_column(String(80), index=True)
+    cap: Mapped[str] = mapped_column(String(2))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[str] = mapped_column(String(200), default="system:autonomy-controller")
+    cleared_by: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class HaoAutonomyChange(Base):
     """History of autonomy level changes per category: promotions, demotions, who approved."""
 
@@ -266,6 +285,8 @@ class HaoAutonomyChange(Base):
     to_level: Mapped[str] = mapped_column(String(2))
     direction: Mapped[str] = mapped_column(String(10))  # promote | demote
     evidence: Mapped[dict] = mapped_column(JSON, default=dict)  # precision, samples, window
-    status: Mapped[str] = mapped_column(String(20), default="proposed")  # proposed | approved | applied
+    status: Mapped[str] = mapped_column(String(20), default="proposed")  # proposed | applied | declined
     approved_by: Mapped[str] = mapped_column(String(200), default="")
+    patch: Mapped[str] = mapped_column(Text, default="")  # the autonomy.yaml change for the owner's PR
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

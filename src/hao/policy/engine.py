@@ -8,7 +8,8 @@ Order of evaluation (ADR 0006). Each step can only keep or **lower** the level, 
 4. **Rules**, in file order: ``downgrade`` lowers by N, ``cap`` lowers to a ceiling. Tripwire rules
    (``text_matches``) look at the ticket text itself, so they still fire when the classifier is
    confidently wrong.
-5. **Clamp** to the category's ``max_level``
+5. **Controller demotions**: runtime caps written by the autonomy controller when quality drops
+6. **Clamp** to the category's ``max_level``
 
 Because no step raises the level, every safety cap in the policy holds whatever the rules or inputs.
 """
@@ -88,7 +89,8 @@ def _rx(pattern: str) -> re.Pattern[str]:
     return re.compile(pattern, re.I)  # every condition set on the rule must hold
 
 
-def decide(policy: Policy, x: DecisionInput) -> Decision:
+def decide(policy: Policy, x: DecisionInput, caps: dict[str, Level] | None = None) -> Decision:
+    """``caps``: runtime demotions from the autonomy controller (category → ceiling). They can only lower."""
     steps: list[dict] = []
 
     def step(reason: str, before: Level, after: Level, **extra) -> Level:
@@ -120,6 +122,9 @@ def decide(policy: Policy, x: DecisionInput) -> Decision:
         else:
             target = _lower(level, rule.effect.cap)
         level = step(f"rule {rule.id}", level, target, rule=rule.id)
+
+    if caps and x.category in caps:
+        level = step("controller demotion", level, _lower(level, caps[x.category]), rule="controller-demotion")
 
     level = step("category max_level", level, _lower(level, max_level))
 
